@@ -46,7 +46,7 @@ public interface Linq<T> extends Iterable<T> {
 
 		@Override
 		public void remove() {
-			throw new RuntimeException("not suported");
+			throw new RuntimeException("not supported");
 		}
 	}
 
@@ -96,21 +96,21 @@ public interface Linq<T> extends Iterable<T> {
 			return Linq.from(list).iterator();
 		}
 
-		public Linq<T> thenBy(final Comparator<T> cmp) {
+		public <U extends Comparable<U>> Linq<T> thenBy(final Function<T, U> keySelector) {
 			return new OrderingLinq<T>(this, (l, r) -> {
 				var c = OrderingLinq.this.cmp.compare(l, r);
 				if (c == 0) {
-					c = cmp.compare(l, r);
+					c = keySelector.apply(l).compareTo(keySelector.apply(r));
 				}
 				return c;
 			});
 		}
 
-		public Linq<T> thenByDescending(final Comparator<T> cmp) {
+		public <U extends Comparable<U>> Linq<T> thenByDescending(final Function<T, U> keySelector) {
 			return new OrderingLinq<T>(this, (l, r) -> {
 				var c = OrderingLinq.this.cmp.compare(l, r);
 				if (c == 0) {
-					c = cmp.compare(r, l);
+					c = keySelector.apply(r).compareTo(keySelector.apply(l));
 				}
 				return c;
 			});
@@ -130,6 +130,38 @@ public interface Linq<T> extends Iterable<T> {
 			this.value1 = value1;
 			this.value2 = value2;
 		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(value1, value2);
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (obj == null)
+				return false;
+			if (getClass() != obj.getClass())
+				return false;
+			@SuppressWarnings("unchecked")
+			Tuple2<T1, T2> other = (Tuple2<T1, T2>) obj;
+			return Objects.equals(value1, other.value1) && Objects.equals(value2, other.value2);
+		}
+
+		@Override
+		public String toString() {
+			return "Tuple2 [value1=" + value1 + ", value2=" + value2 + "]";
+		}
+	}
+
+	public static <T> Linq<T> empty() {
+		return () -> new LinqIterator<T>() {
+			@Override
+			protected Nullable<T> get() {
+				return Nullable.none();
+			}
+		};
 	}
 
 	public static <T> Linq<T> from(final Iterable<T> iterable) {
@@ -238,13 +270,13 @@ public interface Linq<T> extends Iterable<T> {
 	}
 
 	public default Nullable<Long> average(Function<T, Long> func) {
-		var sum = select(func).aggregate(0L, (l, r) -> l + r);
-		var count = count();
+		var s = select(func).aggregate(0L, (l, r) -> l + r);
+		var c = count();
 
-		if (count == 0) {
+		if (c == 0) {
 			return Nullable.none();
 		} else {
-			return Nullable.of(sum / count);
+			return Nullable.of(s / c);
 		}
 	}
 
@@ -274,7 +306,7 @@ public interface Linq<T> extends Iterable<T> {
 					var list = new ArrayList<T>();
 					for (var i = 0; i < size; i++) {
 						list.add(it.next());
-						if (it.hasNext()) {
+						if (!it.hasNext()) {
 							break;
 						}
 					}
@@ -363,7 +395,9 @@ public interface Linq<T> extends Iterable<T> {
 				if (it == null) {
 					var set = new LinkedHashSet<T>();
 					for (var v : Linq.this) {
-						set.add(v);
+						if (!set.contains(v)) {
+							set.add(v);
+						}
 					}
 					it = set.iterator();
 				}
@@ -385,7 +419,10 @@ public interface Linq<T> extends Iterable<T> {
 				if (it == null) {
 					var map = new LinkedHashMap<TKey, T>();
 					for (var v : Linq.this) {
-						map.put(func.apply(v), v);
+						var k = func.apply(v);
+						if (!map.containsKey(k)) {
+							map.put(k, v);
+						}
 					}
 					it = map.values().iterator();
 				}
@@ -418,15 +455,6 @@ public interface Linq<T> extends Iterable<T> {
 			c++;
 		}
 		return defaultValue;
-	}
-
-	public default Linq<T> empty() {
-		return () -> new LinqIterator<T>() {
-			@Override
-			protected Nullable<T> get() {
-				return Nullable.none();
-			}
-		};
 	}
 
 	public default Linq<T> except(final Linq<T> right) {
@@ -586,22 +614,22 @@ public interface Linq<T> extends Iterable<T> {
 		};
 	}
 
-	public default <TKey> Linq<T> intersectBy(final Linq<T> right, final Function<T, TKey> keySelector) {
+	public default <U> Linq<T> intersectBy(final Linq<U> right, final Function<T, U> keySelector) {
 		return () -> new LinqIterator<T>() {
 			Iterator<T> it = Linq.this.iterator();
-			Map<TKey, T> map;
+			Set<U> set;
 
 			@Override
 			protected Nullable<T> get() {
-				if (map == null) {
-					map = new HashMap<>();
+				if (set == null) {
+					set = new HashSet<>();
 					for (var v : right) {
-						map.put(keySelector.apply(v), v);
+						set.add(v);
 					}
 				}
 				while (it.hasNext()) {
 					var v = it.next();
-					if (map.containsKey(keySelector.apply(v))) {
+					if (set.contains(keySelector.apply(v))) {
 						return Nullable.of(v);
 					}
 				}
@@ -754,12 +782,13 @@ public interface Linq<T> extends Iterable<T> {
 		};
 	}
 
-	public default OrderingLinq<T> orderBy(final Comparator<T> cmp) {
-		return new OrderingLinq<T>(this, cmp);
+	public default <U extends Comparable<U>> OrderingLinq<T> orderBy(final Function<T, U> keySelector) {
+		return new OrderingLinq<T>(this, (x, y) -> keySelector.apply(x)
+				.compareTo(keySelector.apply(y)));
 	}
 
-	public default OrderingLinq<T> OrderByDescending(final Comparator<T> cmp) {
-		return new OrderingLinq<T>(this, (l, r) -> cmp.compare(r, l));
+	public default <U extends Comparable<U>> OrderingLinq<T> orderByDescending(final Function<T, U> keySelector) {
+		return new OrderingLinq<T>(this, (l, r) -> keySelector.apply(r).compareTo(keySelector.apply(l)));
 	}
 
 	public default Linq<T> prepend(final T value) {
@@ -904,9 +933,9 @@ public interface Linq<T> extends Iterable<T> {
 			protected Nullable<T> get() {
 				if (it == null) {
 					var c = 0L;
-					var it = Linq.this.iterator();
-					while (it.hasNext()) {
-						it.next();
+					var cit = Linq.this.iterator();
+					while (cit.hasNext()) {
+						cit.next();
 						c++;
 					}
 					it = Linq.this.iterator();
@@ -1028,7 +1057,11 @@ public interface Linq<T> extends Iterable<T> {
 	public default <K> LinkedHashMap<K, T> toDictionary(Function<T, K> keySelector) {
 		var map = new LinkedHashMap<K, T>();
 		for (var val : this) {
-			map.put(keySelector.apply(val), val);
+			var key = keySelector.apply(val);
+			if (map.containsKey(key)) {
+				throw new IllegalArgumentException("キーが重複しています: " + key);
+			}
+			map.put(key, val);
 		}
 		return map;
 	}
@@ -1056,6 +1089,7 @@ public interface Linq<T> extends Iterable<T> {
 			var list = map.get(key);
 			if (list == null) {
 				list = new ArrayList<T>();
+				map.put(key, list);
 			}
 			list.add(val);
 		}
@@ -1096,10 +1130,10 @@ public interface Linq<T> extends Iterable<T> {
 				if (it == null) {
 					var map = new LinkedHashMap<TKey, T>();
 					for (var v : Linq.this) {
-						map.put(keySelector.apply(v), v);
+						map.putIfAbsent(keySelector.apply(v), v);
 					}
 					for (T v : right) {
-						map.put(keySelector.apply(v), v);
+						map.putIfAbsent(keySelector.apply(v), v);
 					}
 					it = map.values().iterator();
 				}
