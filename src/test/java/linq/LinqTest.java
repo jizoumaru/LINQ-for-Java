@@ -24,6 +24,15 @@ public class LinqTest {
 		assertEquals("c", i.next());
 		assertFalse(i.hasNext());
 	}
+	
+	@Test
+	public void testFromArray() {
+		var i = Linq.from("a", "b", "c").iterator();
+		assertEquals("a", i.next());
+		assertEquals("b", i.next());
+		assertEquals("c", i.next());
+		assertFalse(i.hasNext());
+	}
 
 	@Test
 	public void testRange() {

@@ -178,7 +178,23 @@ public interface Linq<T> extends Iterable<T> {
 			}
 		};
 	}
-
+	
+	@SafeVarargs
+	public static <T> Linq<T> from(final T...xs) {
+		return () -> new LinqIterator<T>() {
+			int i = 0;
+			@Override
+			protected Nullable<T> get() {
+				if (i < xs.length) {
+					var x = xs[i];
+					i++;
+					return Nullable.of(x);
+				}
+				return Nullable.none();
+			}
+		};
+	}
+	
 	public static Linq<Integer> range(final int start, final int count) {
 		return () -> new LinqIterator<Integer>() {
 			int i = 0;
