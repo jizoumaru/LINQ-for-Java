@@ -96,7 +96,7 @@ public interface Linq<T> extends Iterable<T> {
 			return Linq.from(list).iterator();
 		}
 
-		public <U extends Comparable<U>> Linq<T> thenBy(final Function<T, U> keySelector) {
+		public <U extends Comparable<U>> OrderingLinq<T> thenBy(final Function<T, U> keySelector) {
 			return new OrderingLinq<T>(this, (l, r) -> {
 				var c = OrderingLinq.this.cmp.compare(l, r);
 				if (c == 0) {
@@ -106,7 +106,7 @@ public interface Linq<T> extends Iterable<T> {
 			});
 		}
 
-		public <U extends Comparable<U>> Linq<T> thenByDescending(final Function<T, U> keySelector) {
+		public <U extends Comparable<U>> OrderingLinq<T> thenByDescending(final Function<T, U> keySelector) {
 			return new OrderingLinq<T>(this, (l, r) -> {
 				var c = OrderingLinq.this.cmp.compare(l, r);
 				if (c == 0) {
