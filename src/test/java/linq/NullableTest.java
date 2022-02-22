@@ -17,7 +17,7 @@ public class NullableTest {
 		assertTrue(n.exists());
 		assertEquals("a", n.value());
 	}
-	
+
 	@Test
 	public void testNull() {
 		var n = Nullable.of(null);
@@ -29,7 +29,7 @@ public class NullableTest {
 	public void testNone() {
 		var n = Nullable.none();
 		assertFalse(n.exists());
-		
+
 		NoSuchElementException ex = null;
 		try {
 			n.value();

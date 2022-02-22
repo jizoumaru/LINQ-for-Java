@@ -54,6 +54,7 @@ public class LinqIteratorTest {
 			ex = e;
 		}
 		assertTrue(ex != null);
+		i.close();
 	}
 
 	@Test
@@ -79,5 +80,6 @@ public class LinqIteratorTest {
 			msg = e.getMessage();
 		}
 		assertEquals("not supported", msg);
+		i.close();
 	}
 }
