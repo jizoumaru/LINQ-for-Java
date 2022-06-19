@@ -18,6 +18,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 @FunctionalInterface
 public interface Linq<T> extends Iterable<T> {
@@ -768,10 +769,6 @@ public interface Linq<T> extends Iterable<T> {
 			});
 		}
 
-	}
-
-	public interface Predicate<T> {
-		boolean test(T value);
 	}
 
 	public static class PrependIterator<T> extends LinqIterator<T> {
