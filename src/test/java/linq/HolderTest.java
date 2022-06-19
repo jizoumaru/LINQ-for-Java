@@ -8,26 +8,26 @@ import java.util.NoSuchElementException;
 
 import org.junit.Test;
 
-import linq.Linq.Nullable;
+import linq.Linq.Holder;
 
-public class NullableTest {
+public class HolderTest {
 	@Test
 	public void testOf() {
-		var n = Nullable.of("a");
+		var n = Holder.of("a");
 		assertTrue(n.exists());
 		assertEquals("a", n.value());
 	}
 
 	@Test
 	public void testNull() {
-		var n = Nullable.of(null);
+		var n = Holder.of(null);
 		assertTrue(n.exists());
 		assertEquals(null, n.value());
 	}
 
 	@Test
 	public void testNone() {
-		var n = Nullable.none();
+		var n = Holder.none();
 		assertFalse(n.exists());
 
 		NoSuchElementException ex = null;

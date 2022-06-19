@@ -14,17 +14,693 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
 @FunctionalInterface
 public interface Linq<T> extends Iterable<T> {
+	public static class AppendIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final T value;
+		private boolean appended;
+
+		public AppendIterator(LinqIterator<T> iterator, T value) {
+			this.iterator = iterator;
+			this.value = value;
+			this.appended = false;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (iterator.hasNext()) {
+				return Holder.of(iterator.next());
+			}
+
+			if (!appended) {
+				appended = true;
+				return Holder.of(value);
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class ArrayIterator<T> extends LinqIterator<T> {
+		private final T[] array;
+		private int index;
+
+		public ArrayIterator(T[] array) {
+			this.array = array;
+			this.index = 0;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (index < array.length) {
+				return Holder.of(array[index++]);
+			}
+			return Holder.none();
+		}
+	}
+
+	public static class CastIterator<T, U> extends LinqIterator<U> {
+		private final LinqIterator<T> iterator;
+
+		public CastIterator(LinqIterator<T> iterator) {
+			this.iterator = iterator;
+		}
+
+		@Override
+		protected Holder<U> get() {
+			if (iterator.hasNext()) {
+				@SuppressWarnings("unchecked")
+				var value = (U) iterator.next();
+				return Holder.of(value);
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class ChunkIterator<T> extends LinqIterator<List<T>> {
+		private final LinqIterator<T> iterator;
+		private final int size;
+
+		public ChunkIterator(LinqIterator<T> iterator, int size) {
+			this.iterator = iterator;
+			this.size = size;
+		}
+
+		@Override
+		protected Holder<List<T>> get() {
+			if (iterator.hasNext()) {
+				var list = new ArrayList<T>();
+
+				for (var i = 0; i < size; i++) {
+					list.add(iterator.next());
+
+					if (!iterator.hasNext()) {
+						break;
+					}
+				}
+
+				return Holder.of(list);
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class ConcatIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> left;
+		private final LinqIterator<T> right;
+
+		public ConcatIterator(LinqIterator<T> left, LinqIterator<T> right) {
+			this.left = left;
+			this.right = right;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (left.hasNext()) {
+				return Holder.of(left.next());
+			}
+
+			if (right.hasNext()) {
+				return Holder.of(right.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+
+	}
+
+	public static class DefaultIfEmptyIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final T defaultValue;
+		private Boolean isEmpty;
+		private boolean ended;
+
+		public DefaultIfEmptyIterator(LinqIterator<T> iterator, T defaultValue) {
+			this.iterator = iterator;
+			this.defaultValue = defaultValue;
+			this.isEmpty = null;
+			this.ended = false;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (isEmpty == null) {
+				isEmpty = !iterator.hasNext();
+			}
+
+			if (isEmpty) {
+				if (!ended) {
+					ended = true;
+					return Holder.of(defaultValue);
+				}
+			}
+
+			if (iterator.hasNext()) {
+				return Holder.of(iterator.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class DistinctByIterator<T, K> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final Function<T, K> keyFactory;
+		private Iterator<T> values;
+
+		public DistinctByIterator(LinqIterator<T> iterator, Function<T, K> keyFactory) {
+			this.iterator = iterator;
+			this.keyFactory = keyFactory;
+			this.values = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (values == null) {
+				var map = new LinkedHashMap<K, T>();
+
+				while (iterator.hasNext()) {
+					var value = iterator.next();
+					var key = keyFactory.apply(value);
+					map.putIfAbsent(key, value);
+				}
+
+				values = map.values().iterator();
+			}
+
+			if (values.hasNext()) {
+				return Holder.of(values.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class DistinctIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private Iterator<T> values;
+
+		public DistinctIterator(LinqIterator<T> iterator) {
+			this.iterator = iterator;
+			this.values = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (values == null) {
+				var set = new LinkedHashSet<T>();
+
+				while (iterator.hasNext()) {
+					var value = iterator.next();
+
+					if (!set.contains(value)) {
+						set.add(value);
+					}
+				}
+
+				values = set.iterator();
+			}
+
+			if (values.hasNext()) {
+				return Holder.of(values.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class EmptyIterator<T> extends LinqIterator<T> {
+		@Override
+		protected Holder<T> get() {
+			return Holder.none();
+		}
+	}
+
+	public static class ExceptByIterator<T, K> extends LinqIterator<T> {
+		private final LinqIterator<T> left;
+		private final LinqIterator<T> right;
+		private final Function<T, K> keyFactory;
+		private Map<K, T> map;
+
+		public ExceptByIterator(LinqIterator<T> left, LinqIterator<T> right, Function<T, K> keyFactory) {
+			this.left = left;
+			this.right = right;
+			this.keyFactory = keyFactory;
+			this.map = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (map == null) {
+				map = new HashMap<K, T>();
+
+				while (right.hasNext()) {
+					var value = right.next();
+					var key = keyFactory.apply(value);
+					map.put(key, value);
+				}
+			}
+
+			while (left.hasNext()) {
+				var value = left.next();
+				var key = keyFactory.apply(value);
+
+				if (!map.containsKey(key)) {
+					return Holder.of(value);
+				}
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	public static class ExceptIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> left;
+		private final LinqIterator<T> right;
+		private Set<T> set;
+
+		public ExceptIterator(LinqIterator<T> left, LinqIterator<T> right) {
+			this.left = left;
+			this.right = right;
+			this.set = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (set == null) {
+				set = new HashSet<T>();
+
+				while (right.hasNext()) {
+					set.add(right.next());
+				}
+			}
+
+			while (left.hasNext()) {
+				var value = left.next();
+
+				if (!set.contains(value)) {
+					return Holder.of(value);
+				}
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	public static class GroupByIterator<T, K> extends LinqIterator<Entry<K, List<T>>> {
+		private final LinqIterator<T> iterator;
+		private final Function<T, K> keyFactory;
+		private Iterator<Entry<K, List<T>>> entries;
+
+		public GroupByIterator(LinqIterator<T> iterator, Function<T, K> keyFactory) {
+			this.iterator = iterator;
+			this.keyFactory = keyFactory;
+			this.entries = null;
+		}
+
+		@Override
+		protected Holder<Entry<K, List<T>>> get() {
+			if (entries == null) {
+				var map = new LinkedHashMap<K, List<T>>();
+
+				while (iterator.hasNext()) {
+					var value = iterator.next();
+					var key = keyFactory.apply(value);
+					var values = map.get(key);
+
+					if (values == null) {
+						values = new ArrayList<T>();
+						map.put(key, values);
+					}
+
+					values.add(value);
+				}
+
+				entries = map.entrySet().iterator();
+			}
+
+			if (entries.hasNext()) {
+				return Holder.of(entries.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class GroupJoinIterator<TLeft, TRight, TKey, TResult> extends LinqIterator<TResult> {
+		private final LinqIterator<TLeft> left;
+		private final LinqIterator<TRight> right;
+		private final Function<TLeft, TKey> leftKeyFactory;
+		private final Function<TRight, TKey> rightKeyFactory;
+		private final BiFunction<TLeft, Linq<TRight>, TResult> resultFactory;
+		private Map<TKey, List<TRight>> map;
+
+		public GroupJoinIterator(
+				LinqIterator<TLeft> left,
+				LinqIterator<TRight> right,
+				Function<TLeft, TKey> leftKeyFactory,
+				Function<TRight, TKey> rightKeyFactory,
+				BiFunction<TLeft, Linq<TRight>, TResult> resultFactory) {
+			this.left = left;
+			this.right = right;
+			this.leftKeyFactory = leftKeyFactory;
+			this.rightKeyFactory = rightKeyFactory;
+			this.resultFactory = resultFactory;
+			this.map = null;
+		}
+
+		@Override
+		protected Holder<TResult> get() {
+			if (map == null) {
+				map = new LinkedHashMap<TKey, List<TRight>>();
+
+				while (right.hasNext()) {
+					var value = right.next();
+					var key = rightKeyFactory.apply(value);
+					var values = map.get(key);
+
+					if (values == null) {
+						values = new ArrayList<TRight>();
+						map.put(key, values);
+					}
+
+					values.add(value);
+				}
+			}
+
+			if (left.hasNext()) {
+				var value = left.next();
+				var key = leftKeyFactory.apply(value);
+				var values = map.get(key);
+
+				if (values == null) {
+					values = new ArrayList<TRight>();
+				}
+
+				return Holder.of(resultFactory.apply(value, Linq.from(values)));
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	public static class Holder<T> {
+		public static <T> Holder<T> none() {
+			return new Holder<T>(null, false);
+		}
+
+		public static <T> Holder<T> of(T value) {
+			return new Holder<T>(value, true);
+		}
+
+		private final T value;
+		private final boolean exist;
+
+		private Holder(T value, boolean exist) {
+			this.value = value;
+			this.exist = exist;
+		}
+
+		public boolean exists() {
+			return exist;
+		}
+
+		public T value() {
+			if (exist) {
+				return value;
+			}
+			throw new NoSuchElementException();
+		}
+	}
+
+	public static class IntersectByIterator<TLeft, TKey> extends LinqIterator<TLeft> {
+		private final LinqIterator<TLeft> left;
+		private final LinqIterator<TKey> right;
+		private final Function<TLeft, TKey> keyFactory;
+		private Set<TKey> set;
+
+		public IntersectByIterator(
+				LinqIterator<TLeft> left,
+				LinqIterator<TKey> right,
+				Function<TLeft, TKey> keyFactory) {
+			this.left = left;
+			this.right = right;
+			this.keyFactory = keyFactory;
+			this.set = null;
+		}
+
+		@Override
+		protected Holder<TLeft> get() {
+			if (set == null) {
+				set = new HashSet<TKey>();
+
+				while (right.hasNext()) {
+					set.add(right.next());
+				}
+			}
+
+			while (left.hasNext()) {
+				var value = left.next();
+				var key = keyFactory.apply(value);
+
+				if (set.contains(key)) {
+					return Holder.of(value);
+				}
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	public static class IntersectIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> left;
+		private final LinqIterator<T> right;
+		private Set<T> set;
+
+		public IntersectIterator(LinqIterator<T> left, LinqIterator<T> right) {
+			this.left = left;
+			this.right = right;
+			this.set = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (set == null) {
+				set = new HashSet<T>();
+
+				while (right.hasNext()) {
+					set.add(right.next());
+				}
+			}
+
+			while (left.hasNext()) {
+				var value = left.next();
+
+				if (set.contains(value)) {
+					return Holder.of(value);
+				}
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	public static class IterableIterator<T> extends LinqIterator<T> {
+		private final Iterable<T> iterable;
+		private Iterator<T> iterator;
+
+		public IterableIterator(Iterable<T> iterable) {
+			this.iterable = iterable;
+			this.iterator = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (iterator == null) {
+				iterator = iterable.iterator();
+			}
+
+			if (iterator.hasNext()) {
+				return Holder.of(iterator.next());
+			}
+
+			return Holder.none();
+		}
+	}
+
+	public static class JoinIterator<TLeft, TRight, TKey, TResult> extends LinqIterator<TResult> {
+		private final LinqIterator<TLeft> left;
+		private final LinqIterator<TRight> right;
+		private final Function<TLeft, TKey> leftKeyFactory;
+		private final Function<TRight, TKey> rightKeyFactory;
+		private final BiFunction<TLeft, Linq<TRight>, TResult> resultFactory;
+		private Map<TKey, List<TRight>> map;
+
+		public JoinIterator(
+				LinqIterator<TLeft> left,
+				LinqIterator<TRight> right,
+				Function<TLeft, TKey> leftKeyFactory,
+				Function<TRight, TKey> rightKeyFactory,
+				BiFunction<TLeft, Linq<TRight>, TResult> resultFactory) {
+			this.left = left;
+			this.right = right;
+			this.leftKeyFactory = leftKeyFactory;
+			this.rightKeyFactory = rightKeyFactory;
+			this.resultFactory = resultFactory;
+			this.map = null;
+		}
+
+		@Override
+		protected Holder<TResult> get() {
+			if (map == null) {
+				map = new LinkedHashMap<>();
+
+				while (right.hasNext()) {
+					var value = right.next();
+					var key = rightKeyFactory.apply(value);
+					var values = map.get(key);
+
+					if (values == null) {
+						values = new ArrayList<TRight>();
+						map.put(key, values);
+					}
+
+					values.add(value);
+				}
+			}
+
+			while (left.hasNext()) {
+				var value = left.next();
+				var key = leftKeyFactory.apply(value);
+				var values = map.get(key);
+
+				if (values != null) {
+					return Holder.of(resultFactory.apply(value, Linq.from(values)));
+				}
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
 	public abstract static class LinqIterator<T> implements Iterator<T>, AutoCloseable {
-		private Nullable<T> value = null;
+		private Holder<T> value = null;
 		private boolean closed = false;
 
-		protected abstract Nullable<T> get();
+		@Override
+		public void close() {
+			if (!closed) {
+				internalClose();
+				closed = true;
+			}
+		}
+
+		protected abstract Holder<T> get();
 
 		@Override
 		public boolean hasNext() {
@@ -37,65 +713,26 @@ public interface Linq<T> extends Iterable<T> {
 			return value.exists();
 		}
 
+		protected void internalClose() {
+		}
+
 		@Override
 		public T next() {
 			if (hasNext()) {
 				var ret = value;
 				value = null;
 				return ret.value();
-			} else {
-				throw new NoSuchElementException();
 			}
+			throw new NoSuchElementException();
 		}
 
 		@Override
 		public void remove() {
 			throw new RuntimeException("not supported");
 		}
-
-		@Override
-		public void close() {
-			if (!closed) {
-				internalClose();
-				closed = true;
-			}
-		}
-
-		protected void internalClose() {
-		}
 	}
 
-	public static class Nullable<T> {
-		public static <T> Nullable<T> none() {
-			return new Nullable<>(null, false);
-		}
-
-		public static <T> Nullable<T> of(T value) {
-			return new Nullable<>(value, true);
-		}
-
-		private final T value;
-		private final boolean exist;
-
-		private Nullable(T value, boolean exist) {
-			this.value = value;
-			this.exist = exist;
-		}
-
-		public boolean exists() {
-			return exist;
-		}
-
-		public T value() {
-			if (exist) {
-				return value;
-			} else {
-				throw new NoSuchElementException();
-			}
-		}
-	}
-
-	static class OrderingLinq<T> implements Linq<T> {
+	public static class OrderingLinq<T> implements Linq<T> {
 		private final Linq<T> linq;
 		private final Comparator<T> cmp;
 
@@ -137,6 +774,363 @@ public interface Linq<T> extends Iterable<T> {
 		boolean test(T value);
 	}
 
+	public static class PrependIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final T value;
+		private boolean prepended;
+
+		public PrependIterator(LinqIterator<T> iterator, T value) {
+			this.iterator = iterator;
+			this.value = value;
+			this.prepended = false;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (!prepended) {
+				prepended = true;
+				return Holder.of(value);
+			}
+
+			if (iterator.hasNext()) {
+				return Holder.of(iterator.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class RangeIterator extends LinqIterator<Integer> {
+		private final int start;
+		private final int count;
+		private int index;
+
+		public RangeIterator(int start, int count) {
+			this.start = start;
+			this.count = count;
+			this.index = 0;
+		}
+
+		@Override
+		protected Holder<Integer> get() {
+			if (index < count) {
+				return Holder.of(start + (index++));
+			}
+			return Holder.none();
+		}
+	}
+
+	public static class RepeatIterator<T> extends LinqIterator<T> {
+		private final T value;
+		private final int count;
+		private int index;
+
+		public RepeatIterator(T value, int count) {
+			this.value = value;
+			this.count = count;
+			this.index = 0;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (index < count) {
+				index++;
+				return Holder.of(value);
+			}
+			return Holder.none();
+		}
+	}
+
+	public static class ReverseIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private Iterator<T> values;
+
+		public ReverseIterator(LinqIterator<T> iterator) {
+			this.iterator = iterator;
+			this.values = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (values == null) {
+				var list = new ArrayList<T>();
+				while (iterator.hasNext()) {
+					list.add(iterator.next());
+				}
+				Collections.reverse(list);
+				values = list.iterator();
+			}
+
+			if (values.hasNext()) {
+				return Holder.of(values.next());
+			}
+
+			return Holder.none();
+		}
+	}
+
+	public static class SelectIterator<T, U> extends LinqIterator<U> {
+		private final LinqIterator<T> iterator;
+		private final Function<T, U> mapper;
+
+		public SelectIterator(LinqIterator<T> iterator, Function<T, U> mapper) {
+			this.iterator = iterator;
+			this.mapper = mapper;
+		}
+
+		@Override
+		protected Holder<U> get() {
+			if (iterator.hasNext()) {
+				return Holder.of(mapper.apply(iterator.next()));
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class SelectMany<T, U> extends LinqIterator<U> {
+		private final LinqIterator<T> iterator;
+		private final Function<T, Linq<U>> mapper;
+		private LinqIterator<U> inner;
+
+		public SelectMany(LinqIterator<T> iterator, Function<T, Linq<U>> mapper) {
+			this.iterator = iterator;
+			this.mapper = mapper;
+			this.inner = new EmptyIterator<U>();
+		}
+
+		@Override
+		public void close() {
+			try {
+				if (inner != null) {
+					inner.close();
+				}
+			} finally {
+				iterator.close();
+			}
+		}
+
+		@Override
+		protected Holder<U> get() {
+			while (!inner.hasNext() && iterator.hasNext()) {
+				inner = mapper.apply(iterator.next()).iterator();
+			}
+
+			if (inner.hasNext()) {
+				return Holder.of(inner.next());
+			}
+
+			return Holder.none();
+		}
+	}
+
+	public static class SkipIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final int count;
+		private int index;
+
+		public SkipIterator(LinqIterator<T> iterator, int count) {
+			this.iterator = iterator;
+			this.count = count;
+			this.index = 0;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			while (index < count && iterator.hasNext()) {
+				index++;
+				iterator.next();
+			}
+
+			if (iterator.hasNext()) {
+				return Holder.of(iterator.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class SkipLastIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final int count;
+		private Queue<T> queue;
+
+		public SkipLastIterator(LinqIterator<T> iterator, int count) {
+			this.iterator = iterator;
+			this.count = count;
+			this.queue = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (queue == null) {
+				queue = new ArrayDeque<T>(count);
+				for (var i = 0; i < count && iterator.hasNext(); i++) {
+					queue.add(iterator.next());
+				}
+			}
+
+			if (iterator.hasNext()) {
+				var value = queue.remove();
+				queue.add(iterator.next());
+				return Holder.of(value);
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class SkipWhileIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final Predicate<T> predicate;
+		private boolean skipped;
+
+		public SkipWhileIterator(LinqIterator<T> iterator, Predicate<T> predicate) {
+			this.iterator = iterator;
+			this.predicate = predicate;
+			this.skipped = false;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (!skipped) {
+				skipped = true;
+
+				while (iterator.hasNext()) {
+					var value = iterator.next();
+
+					if (!predicate.test(value)) {
+						return Holder.of(value);
+					}
+				}
+
+				return Holder.none();
+			}
+
+			if (iterator.hasNext()) {
+				return Holder.of(iterator.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class TakeIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final int count;
+		private int index;
+
+		public TakeIterator(LinqIterator<T> iterator, int count) {
+			this.iterator = iterator;
+			this.count = count;
+			this.index = 0;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (index < count && iterator.hasNext()) {
+				index++;
+				return Holder.of(iterator.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class TakeLastIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final int count;
+		private Queue<T> queue;
+
+		public TakeLastIterator(LinqIterator<T> iterator, int count) {
+			this.iterator = iterator;
+			this.count = count;
+			this.queue = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (queue == null) {
+				queue = new ArrayDeque<T>(count);
+
+				while (iterator.hasNext()) {
+					if (queue.size() == count) {
+						queue.remove();
+					}
+					queue.add(iterator.next());
+				}
+			}
+
+			if (queue.size() > 0) {
+				return Holder.of(queue.remove());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class TakeWhileIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final Predicate<T> predicate;
+
+		public TakeWhileIterator(LinqIterator<T> iterator, Predicate<T> predicate) {
+			this.iterator = iterator;
+			this.predicate = predicate;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (iterator.hasNext()) {
+				var value = iterator.next();
+
+				if (predicate.test(value)) {
+					return Holder.of(value);
+				}
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
 	public static class Tuple2<T1, T2> {
 		public final T1 value1;
 		public final T2 value2;
@@ -170,104 +1164,229 @@ public interface Linq<T> extends Iterable<T> {
 		}
 	}
 
-	public static <T> Linq<T> empty() {
-		return () -> new LinqIterator<T>() {
-			@Override
-			protected Nullable<T> get() {
-				return Nullable.none();
+	public static class TypeIterator<T, U> extends LinqIterator<U> {
+		private final LinqIterator<T> iterator;
+		private final Class<U> type;
+
+		public TypeIterator(LinqIterator<T> iterator, Class<U> type) {
+			this.iterator = iterator;
+			this.type = type;
+		}
+
+		@Override
+		protected Holder<U> get() {
+			while (iterator.hasNext()) {
+				var value = iterator.next();
+
+				if (type.isInstance(value)) {
+					return Holder.of(type.cast(value));
+				}
 			}
-		};
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class UnionByIterator<T, K> extends LinqIterator<T> {
+		private final LinqIterator<T> left;
+		private final LinqIterator<T> right;
+		private final Function<T, K> keyFactory;
+		private Iterator<T> values;
+
+		public UnionByIterator(LinqIterator<T> left, LinqIterator<T> right, Function<T, K> keyFactory) {
+			this.left = left;
+			this.right = right;
+			this.keyFactory = keyFactory;
+			this.values = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (values == null) {
+				var map = new LinkedHashMap<K, T>();
+
+				while (left.hasNext()) {
+					var value = left.next();
+					map.putIfAbsent(keyFactory.apply(value), value);
+				}
+
+				while (right.hasNext()) {
+					var value = right.next();
+					map.putIfAbsent(keyFactory.apply(value), value);
+				}
+
+				values = map.values().iterator();
+			}
+
+			if (values.hasNext()) {
+				return Holder.of(values.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	public static class UnionIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> left;
+		private final LinqIterator<T> right;
+		private Iterator<T> values;
+
+		public UnionIterator(LinqIterator<T> left, LinqIterator<T> right) {
+			this.left = left;
+			this.right = right;
+			this.values = null;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			if (values == null) {
+				var set = new LinkedHashSet<T>();
+
+				while (left.hasNext()) {
+					set.add(left.next());
+				}
+
+				while (right.hasNext()) {
+					set.add(right.next());
+				}
+
+				values = set.iterator();
+			}
+
+			if (values.hasNext()) {
+				return Holder.of(values.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	public static class WhereIterator<T> extends LinqIterator<T> {
+		private final LinqIterator<T> iterator;
+		private final Predicate<T> predicate;
+
+		public WhereIterator(LinqIterator<T> iterator, Predicate<T> predicate) {
+			this.iterator = iterator;
+			this.predicate = predicate;
+		}
+
+		@Override
+		protected Holder<T> get() {
+			while (iterator.hasNext()) {
+				var value = iterator.next();
+
+				if (predicate.test(value)) {
+					return Holder.of(value);
+				}
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			iterator.close();
+		}
+	}
+
+	public static class ZipIterator<TLeft, TRight> extends LinqIterator<Tuple2<TLeft, TRight>> {
+		private final LinqIterator<TLeft> left;
+		private final LinqIterator<TRight> right;
+
+		public ZipIterator(LinqIterator<TLeft> left, LinqIterator<TRight> right) {
+			this.left = left;
+			this.right = right;
+		}
+
+		@Override
+		protected Holder<Tuple2<TLeft, TRight>> get() {
+			if (left.hasNext() && right.hasNext()) {
+				return Holder.of(new Tuple2<TLeft, TRight>(left.next(), right.next()));
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	public static <T> Linq<T> empty() {
+		return () -> new EmptyIterator<T>();
 	}
 
 	public static <T> Linq<T> from(final Iterable<T> iterable) {
-		return () -> new LinqIterator<T>() {
-			Iterator<T> it = iterable.iterator();
-
-			@Override
-			protected Nullable<T> get() {
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+		return () -> new IterableIterator<T>(iterable);
 	}
 
 	@SafeVarargs
 	public static <T> Linq<T> from(final T... xs) {
-		return () -> new LinqIterator<T>() {
-			int i = 0;
-
-			@Override
-			protected Nullable<T> get() {
-				if (i < xs.length) {
-					var x = xs[i];
-					i++;
-					return Nullable.of(x);
-				}
-				return Nullable.none();
-			}
-		};
+		return () -> new ArrayIterator<T>(xs);
 	}
 
 	public static Linq<Integer> range(final int start, final int count) {
-		return () -> new LinqIterator<Integer>() {
-			int i = 0;
-
-			@Override
-			protected Nullable<Integer> get() {
-				if (i < count) {
-					return Nullable.of(start + i++);
-				}
-				return Nullable.none();
-			}
-		};
+		return () -> new RangeIterator(start, count);
 	}
 
 	public static <T> Linq<T> repeat(final T value, final int count) {
-		return () -> new LinqIterator<T>() {
-			int i = 0;
-
-			@Override
-			protected Nullable<T> get() {
-				if (i < count) {
-					i++;
-					return Nullable.of(value);
-				}
-				return Nullable.none();
-			}
-		};
+		return () -> new RepeatIterator<T>(value, count);
 	}
 
-	public default Nullable<T> aggregate(BiFunction<T, T, T> func) {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				var l = it.next();
-				while (it.hasNext()) {
-					l = func.apply(l, it.next());
+	public default Holder<T> aggregate(BiFunction<T, T, T> func) {
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				var result = iterator.next();
+				while (iterator.hasNext()) {
+					result = func.apply(result, iterator.next());
 				}
-				return Nullable.of(l);
-			} else {
-				return Nullable.none();
+				return Holder.of(result);
 			}
+			return Holder.none();
 		}
 	}
 
 	public default T aggregate(T seed, BiFunction<T, T, T> func) {
-		try (var it = iterator()) {
-			var l = seed;
-			while (it.hasNext()) {
-				l = func.apply(l, it.next());
+		try (var iterator = iterator()) {
+			var result = seed;
+			while (iterator.hasNext()) {
+				result = func.apply(result, iterator.next());
 			}
-			return l;
+			return result;
 		}
 	}
 
-	public default boolean all(Predicate<T> pred) {
-		try (var it = iterator()) {
-			while (it.hasNext()) {
-				if (!pred.test(it.next())) {
+	public default boolean all(Predicate<T> predicate) {
+		try (var iterator = iterator()) {
+			while (iterator.hasNext()) {
+				if (!predicate.test(iterator.next())) {
 					return false;
 				}
 			}
@@ -275,10 +1394,10 @@ public interface Linq<T> extends Iterable<T> {
 		}
 	}
 
-	public default boolean any(Predicate<T> pred) {
-		try (var it = iterator()) {
-			while (it.hasNext()) {
-				if (pred.test(it.next())) {
+	public default boolean any(Predicate<T> predicate) {
+		try (var iterator = iterator()) {
+			while (iterator.hasNext()) {
+				if (predicate.test(iterator.next())) {
 					return true;
 				}
 			}
@@ -287,126 +1406,50 @@ public interface Linq<T> extends Iterable<T> {
 	}
 
 	public default Linq<T> append(final T value) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			boolean end = false;
-
-			@Override
-			protected Nullable<T> get() {
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					if (!end) {
-						end = true;
-						return Nullable.of(value);
-					} else {
-						return Nullable.none();
-					}
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new AppendIterator<T>(iterator(), value);
 	}
 
-	public default Nullable<Long> average(Function<T, Long> func) {
-		var s = select(func).aggregate(0L, (l, r) -> l + r);
-		var c = count();
+	public default Holder<Long> average(Function<T, Long> func) {
+		var sum = 0L;
 
-		if (c == 0) {
-			return Nullable.none();
-		} else {
-			return Nullable.of(s / c);
+		try (var iterator = iterator()) {
+			while (iterator.hasNext()) {
+				sum += func.apply(iterator.next());
+			}
 		}
+
+		var count = 0L;
+
+		try (var iterator = iterator()) {
+			while (iterator.hasNext()) {
+				iterator.next();
+				count++;
+			}
+		}
+
+		if (count != 0L) {
+			return Holder.of(sum / count);
+		}
+
+		return Holder.none();
 	}
 
 	public default <U> Linq<U> cast() {
-		return () -> new LinqIterator<U>() {
-			LinqIterator<T> it = Linq.this.iterator();
-
-			@SuppressWarnings("unchecked")
-			@Override
-			protected Nullable<U> get() {
-				if (it.hasNext()) {
-					return Nullable.of((U) it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new CastIterator<T, U>(iterator());
 	}
 
 	public default Linq<List<T>> chunk(final int size) {
-		return () -> new LinqIterator<List<T>>() {
-			LinqIterator<T> it = Linq.this.iterator();
-
-			@Override
-			protected Nullable<List<T>> get() {
-				if (it.hasNext()) {
-					var list = new ArrayList<T>();
-					
-					for (var i = 0; i < size; i++) {
-						list.add(it.next());
-					
-						if (!it.hasNext()) {
-							break;
-						}
-					}
-					
-					return Nullable.of(list);
-				} else {
-					return Nullable.none();
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new ChunkIterator<T>(iterator(), size);
 	}
 
 	public default Linq<T> concat(final Linq<T> right) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> l = Linq.this.iterator();
-			LinqIterator<T> r = right.iterator();
-
-			@Override
-			protected Nullable<T> get() {
-				if (l.hasNext()) {
-					return Nullable.of(l.next());
-				} else {
-					if (r.hasNext()) {
-						return Nullable.of(r.next());
-					} else {
-						return Nullable.none();
-					}
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				try {
-					r.close();
-				} finally {
-					l.close();
-				}
-			}
-		};
+		return () -> new ConcatIterator<T>(iterator(), right.iterator());
 	}
 
 	public default boolean contains(T target) {
-		try (var it = iterator()) {
-			while (it.hasNext()) {
-				if (it.next().equals(target)) {
+		try (var iterator = iterator()) {
+			while (iterator.hasNext()) {
+				if (Objects.equals(iterator.next(), target)) {
 					return true;
 				}
 			}
@@ -415,140 +1458,58 @@ public interface Linq<T> extends Iterable<T> {
 	}
 
 	public default long count() {
-		try (var it = iterator()) {
-			var c = 0L;
-			while (it.hasNext()) {
-				it.next();
-				c++;
+		try (var iterator = iterator()) {
+			var count = 0L;
+			while (iterator.hasNext()) {
+				iterator.next();
+				count++;
 			}
-			return c;
+			return count;
 		}
 	}
 
 	public default Linq<T> defaultIfEmpty(final T defaultValue) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			Boolean isIt;
-			boolean end;
-
-			@Override
-			protected Nullable<T> get() {
-				if (isIt == null) {
-					isIt = it.hasNext();
-				}
-				if (isIt) {
-					if (it.hasNext()) {
-						return Nullable.of(it.next());
-					} else {
-						return Nullable.none();
-					}
-				} else {
-					if (!end) {
-						end = true;
-						return Nullable.of(defaultValue);
-					} else {
-						return Nullable.none();
-					}
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new DefaultIfEmptyIterator<T>(iterator(), defaultValue);
 	}
 
 	public default Linq<T> distinct() {
-		return () -> new LinqIterator<T>() {
-			Iterator<T> it;
-
-			@Override
-			protected Nullable<T> get() {
-				if (it == null) {
-					var set = new LinkedHashSet<T>();
-
-					try (var it = Linq.this.iterator()) {
-						while (it.hasNext()) {
-							var v = it.next();
-
-							if (!set.contains(v)) {
-								set.add(v);
-							}
-						}
-					}
-
-					it = set.iterator();
-				}
-
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+		return () -> new DistinctIterator<T>(iterator());
 	}
 
-	public default <TKey> Linq<T> distinctBy(final Function<T, TKey> func) {
-		return () -> new LinqIterator<T>() {
-			Iterator<T> it;
-
-			@Override
-			protected Nullable<T> get() {
-				if (it == null) {
-					var map = new LinkedHashMap<TKey, T>();
-
-					try (var it = Linq.this.iterator()) {
-						while (it.hasNext()) {
-							var v = it.next();
-							var k = func.apply(v);
-							map.putIfAbsent(k, v);
-						}
-					}
-
-					it = map.values().iterator();
-				}
-
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+	public default <K> Linq<T> distinctBy(final Function<T, K> keyFactory) {
+		return () -> new DistinctByIterator<T, K>(iterator(), keyFactory);
 	}
 
-	public default Nullable<T> elementAt(long index) {
-		try (var it = iterator()) {
-			var c = 0L;
+	public default Holder<T> elementAt(long index) {
+		try (var iterator = iterator()) {
+			var count = 0L;
 
-			while (it.hasNext()) {
-				var v = it.next();
-				
-				if (c == index) {
-					return Nullable.of(v);
+			while (iterator.hasNext()) {
+				var value = iterator.next();
+
+				if (count == index) {
+					return Holder.of(value);
 				}
-				
-				c++;
+
+				count++;
 			}
 
-			return Nullable.none();
+			return Holder.none();
 		}
 	}
 
 	public default T elementAt(long index, T defaultValue) {
-		try (var it = iterator()) {
-			var c = 0L;
+		try (var iterator = iterator()) {
+			var count = 0L;
 
-			while (it.hasNext()) {
-				var v = it.next();
-				
-				if (c == index) {
-					return v;
+			while (iterator.hasNext()) {
+				var value = iterator.next();
+
+				if (count == index) {
+					return value;
 				}
-				
-				c++;
+
+				count++;
 			}
 
 			return defaultValue;
@@ -556,795 +1517,315 @@ public interface Linq<T> extends Iterable<T> {
 	}
 
 	public default Linq<T> except(final Linq<T> right) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			Set<T> set;
-
-			@Override
-			protected Nullable<T> get() {
-				if (set == null) {
-					set = new HashSet<>();
-
-					try (var r = right.iterator()) {
-						while (r.hasNext()) {
-							set.add(r.next());
-						}
-					}
-				}
-
-				while (it.hasNext()) {
-					var v = it.next();
-
-					if (!set.contains(v)) {
-						return Nullable.of(v);
-					}
-				}
-
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new ExceptIterator<T>(iterator(), right.iterator());
 	}
 
-	public default <TKey> Linq<T> exceptBy(final Linq<T> right, final Function<T, TKey> keySelector) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			Map<TKey, T> map;
-
-			@Override
-			protected Nullable<T> get() {
-				if (map == null) {
-					map = new HashMap<>();
-
-					try (var r = right.iterator()) {
-						while (r.hasNext()) {
-							var v = r.next();
-							map.put(keySelector.apply(v), v);
-						}
-					}
-				}
-
-				while (it.hasNext()) {
-					var v = it.next();
-
-					if (!map.containsKey(keySelector.apply(v))) {
-						return Nullable.of(v);
-					}
-				}
-
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default <K> Linq<T> exceptBy(final Linq<T> right, final Function<T, K> keyFactory) {
+		return () -> new ExceptByIterator<T, K>(iterator(), right.iterator(), keyFactory);
 	}
 
-	public default Nullable<T> first() {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				return Nullable.of(it.next());
-			} else {
-				return Nullable.none();
+	public default Holder<T> first() {
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				return Holder.of(iterator.next());
 			}
+			return Holder.none();
 		}
 	}
 
 	public default T firstOrDefault(T defaultValue) {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				return it.next();
-			} else {
-				return defaultValue;
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				return iterator.next();
 			}
+			return defaultValue;
 		}
 	}
 
-	public default <TKey> Linq<Entry<TKey, List<T>>> groupBy(final Function<T, TKey> keySelector) {
-		return () -> new LinqIterator<Entry<TKey, List<T>>>() {
-			Iterator<Entry<TKey, List<T>>> it;
-
-			@Override
-			protected Nullable<Entry<TKey, List<T>>> get() {
-				if (it == null) {
-					var map = new LinkedHashMap<TKey, List<T>>();
-
-					try (var it = Linq.this.iterator()) {
-						while (it.hasNext()) {
-							var v = it.next();
-							var k = keySelector.apply(v);
-							var vs = map.get(k);
-
-							if (vs == null) {
-								vs = new ArrayList<T>();
-								map.put(k, vs);
-							}
-
-							vs.add(v);
-						}
-					}
-
-					it = map.entrySet().iterator();
-				}
-
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+	public default <K> Linq<Entry<K, List<T>>> groupBy(final Function<T, K> keySelector) {
+		return () -> new GroupByIterator<T, K>(iterator(), keySelector);
 	}
 
 	public default <TRight, TKey, TResult> Linq<TResult> groupJoin(
-		final Linq<TRight> rightLinq,
-		final Function<T, TKey> leftKeySelector,
-		final Function<TRight, TKey> rightKeySelector,
-		final BiFunction<T, Linq<TRight>, TResult> resultSelector) {
+			Linq<TRight> right,
+			Function<T, TKey> leftKeyFactory,
+			Function<TRight, TKey> rightKeyFactory,
+			BiFunction<T, Linq<TRight>, TResult> resultFactory) {
 
-		return () -> new LinqIterator<TResult>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			Map<TKey, List<TRight>> map;
-
-			@Override
-			protected Nullable<TResult> get() {
-				if (map == null) {
-					map = new LinkedHashMap<>();
-
-					try (var r = rightLinq.iterator()) {
-						while (r.hasNext()) {
-							var v = r.next();
-							var k = rightKeySelector.apply(v);
-							var vs = map.get(k);
-
-							if (vs == null) {
-								vs = new ArrayList<>();
-								map.put(k, vs);
-							}
-
-							vs.add(v);
-						}
-					}
-				}
-
-				if (it.hasNext()) {
-					var l = it.next();
-					var list = map.get(leftKeySelector.apply(l));
-
-					if (list == null) {
-						list = new ArrayList<>();
-					}
-
-					return Nullable.of(resultSelector.apply(l, Linq.from(list)));
-				} else {
-					return Nullable.none();
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new GroupJoinIterator<T, TRight, TKey, TResult>(
+				iterator(),
+				right.iterator(),
+				leftKeyFactory,
+				rightKeyFactory,
+				resultFactory);
 	}
 
 	public default Linq<T> intersect(final Linq<T> right) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			Set<T> set;
-
-			@Override
-			protected Nullable<T> get() {
-				if (set == null) {
-					set = new HashSet<>();
-
-					try (var r = right.iterator()) {
-						while (r.hasNext()) {
-							set.add(r.next());
-						}
-					}
-				}
-
-				while (it.hasNext()) {
-					var v = it.next();
-
-					if (set.contains(v)) {
-						return Nullable.of(v);
-					}
-				}
-
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new IntersectIterator<T>(iterator(), right.iterator());
 	}
 
-	public default <U> Linq<T> intersectBy(final Linq<U> right, final Function<T, U> keySelector) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			Set<U> set;
-
-			@Override
-			protected Nullable<T> get() {
-				if (set == null) {
-					set = new HashSet<>();
-
-					try (var r = right.iterator()) {
-						while (r.hasNext()) {
-							set.add(r.next());
-						}
-					}
-				}
-
-				while (it.hasNext()) {
-					var v = it.next();
-
-					if (set.contains(keySelector.apply(v))) {
-						return Nullable.of(v);
-					}
-				}
-
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default <TKey> Linq<T> intersectBy(final Linq<TKey> right, final Function<T, TKey> keyFactory) {
+		return () -> new IntersectByIterator<T, TKey>(iterator(), right.iterator(), keyFactory);
 	}
 
 	@Override
 	public abstract LinqIterator<T> iterator();
 
 	public default <TRight, TKey, TResult> Linq<TResult> join(
-		final Linq<TRight> rightLinq,
-		final Function<T, TKey> leftKeySelector,
-		final Function<TRight, TKey> rightKeySelector,
-		final BiFunction<T, Linq<TRight>, TResult> resultSelector) {
+			Linq<TRight> right,
+			Function<T, TKey> leftKeyFactory,
+			Function<TRight, TKey> rightKeyFactory,
+			BiFunction<T, Linq<TRight>, TResult> resultFactory) {
 
-		return () -> new LinqIterator<TResult>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			Map<TKey, List<TRight>> map;
-
-			@Override
-			protected Nullable<TResult> get() {
-				if (map == null) {
-					map = new LinkedHashMap<>();
-
-					try (var r = rightLinq.iterator()) {
-						while (r.hasNext()) {
-							var v = r.next();
-							var k = rightKeySelector.apply(v);
-							var vs = map.get(k);
-
-							if (vs == null) {
-								vs = new ArrayList<>();
-								map.put(k, vs);
-							}
-
-							vs.add(v);
-						}
-					}
-				}
-
-				while (it.hasNext()) {
-					var l = it.next();
-					var list = map.get(leftKeySelector.apply(l));
-
-					if (list != null) {
-						return Nullable.of(resultSelector.apply(l, Linq.from(list)));
-					}
-				}
-
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new JoinIterator<T, TRight, TKey, TResult>(
+				iterator(),
+				right.iterator(),
+				leftKeyFactory,
+				rightKeyFactory,
+				resultFactory);
 	}
 
-	public default Nullable<T> last() {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				T v;
+	public default Holder<T> last() {
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				T value;
 				do {
-					v = it.next();
-				} while (it.hasNext());
+					value = iterator.next();
+				} while (iterator.hasNext());
 
-				return Nullable.of(v);
-			} else {
-				return Nullable.none();
+				return Holder.of(value);
 			}
+
+			return Holder.none();
 		}
 	}
 
-	public default Nullable<T> max(Comparator<T> cmp) {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				var m = it.next();
+	public default Holder<T> max(Comparator<T> comparator) {
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				var result = iterator.next();
 
-				while (it.hasNext()) {
-					var v = it.next();
+				while (iterator.hasNext()) {
+					var value = iterator.next();
 
-					if (cmp.compare(m, v) < 0) {
-						m = v;
+					if (comparator.compare(result, value) < 0) {
+						result = value;
 					}
 				}
 
-				return Nullable.of(m);
-			} else {
-				return Nullable.none();
+				return Holder.of(result);
 			}
+
+			return Holder.none();
 		}
 	}
 
-	public default <TKey> Nullable<T> maxBy(Comparator<TKey> cmp, final Function<T, TKey> keySelector) {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				var mv = it.next();
-				var mk = keySelector.apply(mv);
+	public default <TKey> Holder<T> maxBy(
+			Comparator<TKey> keyComparator,
+			Function<T, TKey> keyFactory) {
 
-				while (it.hasNext()) {
-					var v = it.next();
-					var k = keySelector.apply(v);
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				var resultValue = iterator.next();
+				var resultKey = keyFactory.apply(resultValue);
 
-					if (cmp.compare(mk, k) < 0) {
-						mv = v;
-						mk = k;
+				while (iterator.hasNext()) {
+					var value = iterator.next();
+					var key = keyFactory.apply(value);
+
+					if (keyComparator.compare(resultKey, key) < 0) {
+						resultValue = value;
+						resultKey = key;
 					}
 				}
 
-				return Nullable.of(mv);
-			} else {
-				return Nullable.none();
+				return Holder.of(resultValue);
 			}
+
+			return Holder.none();
 		}
 	}
 
-	public default Nullable<T> min(Comparator<T> cmp) {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				var m = it.next();
+	public default Holder<T> min(Comparator<T> comparator) {
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				var result = iterator.next();
 
-				while (it.hasNext()) {
-					var v = it.next();
+				while (iterator.hasNext()) {
+					var value = iterator.next();
 
-					if (cmp.compare(v, m) < 0) {
-						m = v;
+					if (comparator.compare(value, result) < 0) {
+						result = value;
 					}
 				}
 
-				return Nullable.of(m);
-			} else {
-				return Nullable.none();
+				return Holder.of(result);
 			}
+
+			return Holder.none();
 		}
 	}
 
-	public default <TKey> Nullable<T> minBy(Comparator<TKey> cmp, final Function<T, TKey> keySelector) {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				var mv = it.next();
-				var mk = keySelector.apply(mv);
+	public default <TKey> Holder<T> minBy(
+			Comparator<TKey> keyComparator,
+			Function<T, TKey> keyFactory) {
 
-				while (it.hasNext()) {
-					var v = it.next();
-					var k = keySelector.apply(v);
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				var resultValue = iterator.next();
+				var resultKey = keyFactory.apply(resultValue);
 
-					if (cmp.compare(k, mk) < 0) {
-						mv = v;
-						mk = k;
+				while (iterator.hasNext()) {
+					var value = iterator.next();
+					var key = keyFactory.apply(value);
+
+					if (keyComparator.compare(key, resultKey) < 0) {
+						resultValue = value;
+						resultKey = key;
 					}
 				}
 
-				return Nullable.of(mv);
-			} else {
-				return Nullable.none();
+				return Holder.of(resultValue);
 			}
+
+			return Holder.none();
 		}
 	}
 
 	public default <U> Linq<U> ofType(final Class<U> type) {
-		return () -> new LinqIterator<U>() {
-			LinqIterator<T> it = Linq.this.iterator();
-
-			@Override
-			protected Nullable<U> get() {
-				while (it.hasNext()) {
-					var v = it.next();
-
-					if (type.isInstance(v)) {
-						return Nullable.of(type.cast(v));
-					}
-				}
-
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+		return () -> new TypeIterator<T, U>(iterator(), type);
 	}
 
 	public default <U extends Comparable<U>> OrderingLinq<T> orderBy(final Function<T, U> keySelector) {
-		return new OrderingLinq<T>(this, (x, y) -> keySelector.apply(x)
-			.compareTo(keySelector.apply(y)));
+		return new OrderingLinq<T>(this, (x, y) -> keySelector.apply(x).compareTo(keySelector.apply(y)));
 	}
 
 	public default <U extends Comparable<U>> OrderingLinq<T> orderByDescending(final Function<T, U> keySelector) {
 		return new OrderingLinq<T>(this, (l, r) -> keySelector.apply(r).compareTo(keySelector.apply(l)));
 	}
 
-	public default Linq<T> prepend(final T value) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			boolean isIt = false;
-
-			@Override
-			protected Nullable<T> get() {
-				if (!isIt) {
-					isIt = true;
-					return Nullable.of(value);
-				} else {
-					if (it.hasNext()) {
-						return Nullable.of(it.next());
-					} else {
-						return Nullable.none();
-					}
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default Linq<T> prepend(T value) {
+		return () -> new PrependIterator<T>(iterator(), value);
 	}
 
 	public default Linq<T> reverse() {
-		return () -> new LinqIterator<T>() {
-			Iterator<T> it;
-
-			@Override
-			protected Nullable<T> get() {
-				if (it == null) {
-					var list = toList();
-					Collections.reverse(list);
-					it = list.iterator();
-				}
-
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+		return () -> new ReverseIterator<T>(iterator());
 	}
 
-	public default <R> Linq<R> select(final Function<T, R> func) {
-		return () -> new LinqIterator<R>() {
-			LinqIterator<T> it = Linq.this.iterator();
-
-			@Override
-			protected Nullable<R> get() {
-				if (it.hasNext()) {
-					return Nullable.of(func.apply(it.next()));
-				}
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default <U> Linq<U> select(final Function<T, U> mapper) {
+		return () -> new SelectIterator<T, U>(iterator(), mapper);
 	}
 
-	public default <U> Linq<U> selectMany(final Function<T, Linq<U>> func) {
-		return () -> new LinqIterator<U>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			LinqIterator<U> inner = null;
-
-			@Override
-			protected Nullable<U> get() {
-				while (inner == null || !inner.hasNext()) {
-					if (!it.hasNext()) {
-						return Nullable.none();
-					}
-					inner = func.apply(it.next()).iterator();
-				}
-				return Nullable.of(inner.next());
-			}
-
-			@Override
-			protected void internalClose() {
-				try {
-					if (inner != null) {
-						inner.close();
-					}
-				} finally {
-					it.close();
-				}
-			}
-		};
+	public default <U> Linq<U> selectMany(final Function<T, Linq<U>> mapper) {
+		return () -> new SelectMany<T, U>(iterator(), mapper);
 	}
 
 	public default boolean sequenceEqual(Linq<T> rightLinq) {
-		try (var l = iterator();
-			var r = rightLinq.iterator()) {
+		try (var left = iterator(); var right = rightLinq.iterator()) {
 
-			while (l.hasNext() && r.hasNext()) {
-				if (!Objects.equals(l.next(), r.next())) {
+			while (left.hasNext() && right.hasNext()) {
+				if (!Objects.equals(left.next(), right.next())) {
 					return false;
 				}
 			}
 
-			return l.hasNext() == r.hasNext();
+			return left.hasNext() == right.hasNext();
 		}
 	}
 
 	public default T single() {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				var v = it.next();
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				var value = iterator.next();
 
-				if (it.hasNext()) {
+				if (iterator.hasNext()) {
 					throw new IllegalStateException("値が複数存在します");
-				} else {
-					return v;
 				}
-			} else {
-				throw new IllegalStateException("値が存在しません");
+
+				return value;
 			}
+
+			throw new IllegalStateException("値が存在しません");
 		}
 	}
 
 	public default T single(T defaultValue) {
-		try (var it = iterator()) {
-			if (it.hasNext()) {
-				T v = it.next();
+		try (var iterator = iterator()) {
+			if (iterator.hasNext()) {
+				var value = iterator.next();
 
-				if (it.hasNext()) {
+				if (iterator.hasNext()) {
 					throw new IllegalStateException("値が複数存在します");
-				} else {
-					return v;
 				}
-			} else {
-				return defaultValue;
+
+				return value;
 			}
+
+			return defaultValue;
 		}
 	}
 
-	public default Linq<T> skip(final int n) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			long i = 0L;
-
-			@Override
-			protected Nullable<T> get() {
-				while (i < n && it.hasNext()) {
-					i++;
-					it.next();
-				}
-
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default Linq<T> skip(final int count) {
+		return () -> new SkipIterator<T>(iterator(), count);
 	}
 
-	public default Linq<T> skipLast(final long size) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it;
-			long to;
-			long i;
-
-			@Override
-			protected Nullable<T> get() {
-				if (it == null) {
-					var c = 0L;
-
-					try (var cit = Linq.this.iterator()) {
-						while (cit.hasNext()) {
-							cit.next();
-							c++;
-						}
-					}
-
-					it = Linq.this.iterator();
-					to = c - size;
-					i = 0L;
-				}
-
-				if (i < to && it.hasNext()) {
-					i++;
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				if (it != null) {
-					it.close();
-				}
-			}
-		};
+	public default Linq<T> skipLast(final int size) {
+		return () -> new SkipLastIterator<T>(iterator(), size);
 	}
 
-	public default Linq<T> skipWhile(final Predicate<T> p) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			boolean skipped = false;
-
-			@Override
-			protected Nullable<T> get() {
-				if (!skipped) {
-					while (it.hasNext()) {
-						var v = it.next();
-
-						if (!p.test(v)) {
-							skipped = true;
-							return Nullable.of(v);
-						}
-					}
-
-					return Nullable.none();
-				} else {
-					if (it.hasNext()) {
-						return Nullable.of(it.next());
-					} else {
-						return Nullable.none();
-					}
-				}
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default Linq<T> skipWhile(Predicate<T> predicate) {
+		return () -> new SkipWhileIterator<T>(iterator(), predicate);
 	}
 
 	public default long sum(Function<T, Long> func) {
-		try (var it = iterator()) {
-			var s = 0L;
+		try (var iterator = iterator()) {
+			var result = 0L;
 
-			while (it.hasNext()) {
-				s += func.apply(it.next());
+			while (iterator.hasNext()) {
+				result += func.apply(iterator.next());
 			}
 
-			return s;
+			return result;
 		}
 	}
 
-	public default Linq<T> take(final int n) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-			long i = 0L;
-
-			@Override
-			protected Nullable<T> get() {
-				if (i < n && it.hasNext()) {
-					i++;
-					return Nullable.of(it.next());
-				}
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default Linq<T> take(int count) {
+		return () -> new TakeIterator<T>(iterator(), count);
 	}
 
 	public default Linq<T> takeLast(final int size) {
-		return () -> new LinqIterator<T>() {
-			Iterator<T> it;
-
-			@Override
-			protected Nullable<T> get() {
-				if (it == null) {
-					var q = new ArrayDeque<T>(size);
-
-					try (var it = Linq.this.iterator()) {
-						while (it.hasNext()) {
-							if (q.size() == size) {
-								q.remove();
-							}
-
-							q.add(it.next());
-						}
-					}
-
-					it = q.iterator();
-				}
-
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+		return () -> new TakeLastIterator<T>(iterator(), size);
 	}
 
-	public default Linq<T> takeWhile(final Predicate<T> p) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-
-			@Override
-			protected Nullable<T> get() {
-				if (it.hasNext()) {
-					var v = it.next();
-
-					if (p.test(v)) {
-						return Nullable.of(v);
-					}
-				}
-
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default Linq<T> takeWhile(Predicate<T> predicate) {
+		return () -> new TakeWhileIterator<T>(iterator(), predicate);
 	}
 
-	public default T[] toArray(T[] a) {
-		try (var it = iterator()) {
+	public default T[] toArray(T[] array) {
+		try (var iterator = iterator()) {
 			var list = new ArrayList<T>();
 
-			while (it.hasNext()) {
-				list.add(it.next());
+			while (iterator.hasNext()) {
+				list.add(iterator.next());
 			}
 
-			return list.toArray(a);
+			return list.toArray(array);
 		}
 	}
 
-	public default <K> LinkedHashMap<K, T> toDictionary(Function<T, K> keySelector) {
-		try (var it = iterator()) {
+	public default <K> LinkedHashMap<K, T> toDictionary(Function<T, K> keyFactory) {
+		try (var iterator = iterator()) {
 			var map = new LinkedHashMap<K, T>();
 
-			while (it.hasNext()) {
-				var v = it.next();
-				var k = keySelector.apply(v);
+			while (iterator.hasNext()) {
+				var value = iterator.next();
+				var key = keyFactory.apply(value);
 
-				if (map.containsKey(k)) {
-					throw new IllegalArgumentException("キーが重複しています: " + k);
+				if (map.containsKey(key)) {
+					throw new IllegalArgumentException("キーが重複しています: " + key);
 				}
 
-				map.put(k, v);
+				map.put(key, value);
 			}
 
 			return map;
@@ -1352,11 +1833,11 @@ public interface Linq<T> extends Iterable<T> {
 	}
 
 	public default LinkedHashSet<T> toHashSet() {
-		try (var it = iterator()) {
+		try (var iterator = iterator()) {
 			var set = new LinkedHashSet<T>();
 
-			while (it.hasNext()) {
-				set.add(it.next());
+			while (iterator.hasNext()) {
+				set.add(iterator.next());
 			}
 
 			return set;
@@ -1364,32 +1845,32 @@ public interface Linq<T> extends Iterable<T> {
 	}
 
 	public default ArrayList<T> toList() {
-		try (var it = iterator()) {
+		try (var iterator = iterator()) {
 			var list = new ArrayList<T>();
 
-			while (it.hasNext()) {
-				list.add(it.next());
+			while (iterator.hasNext()) {
+				list.add(iterator.next());
 			}
 
 			return list;
 		}
 	}
 
-	public default <K> LinkedHashMap<K, List<T>> toLookup(Function<T, K> keySelector) {
-		try (var it = iterator()) {
+	public default <K> LinkedHashMap<K, List<T>> toLookup(Function<T, K> keyFactory) {
+		try (var iterator = iterator()) {
 			var map = new LinkedHashMap<K, List<T>>();
 
-			while (it.hasNext()) {
-				var v = it.next();
-				var k = keySelector.apply(v);
-				var list = map.get(k);
+			while (iterator.hasNext()) {
+				var value = iterator.next();
+				var key = keyFactory.apply(value);
+				var list = map.get(key);
 
 				if (list == null) {
 					list = new ArrayList<T>();
-					map.put(k, list);
+					map.put(key, list);
 				}
 
-				list.add(v);
+				list.add(value);
 			}
 
 			return map;
@@ -1397,119 +1878,19 @@ public interface Linq<T> extends Iterable<T> {
 	}
 
 	public default Linq<T> union(final Linq<T> right) {
-		return () -> new LinqIterator<T>() {
-			Iterator<T> it;
-
-			@Override
-			protected Nullable<T> get() {
-				if (it == null) {
-					var set = new LinkedHashSet<T>();
-
-					try (var it = Linq.this.iterator()) {
-						while (it.hasNext()) {
-							set.add(it.next());
-						}
-					}
-
-					try (var it = right.iterator()) {
-						while (it.hasNext()) {
-							set.add(it.next());
-						}
-					}
-
-					it = set.iterator();
-				}
-
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+		return () -> new UnionIterator<T>(iterator(), right.iterator());
 	}
 
-	public default <TKey> Linq<T> unionBy(final Linq<T> right, final Function<T, TKey> keySelector) {
-		return () -> new LinqIterator<T>() {
-			Iterator<T> it;
-
-			@Override
-			protected Nullable<T> get() {
-				if (it == null) {
-					var map = new LinkedHashMap<TKey, T>();
-
-					try (var it = Linq.this.iterator()) {
-						while (it.hasNext()) {
-							var v = it.next();
-							map.putIfAbsent(keySelector.apply(v), v);
-						}
-					}
-
-					try (var it = right.iterator()) {
-						while (it.hasNext()) {
-							var v = it.next();
-							map.putIfAbsent(keySelector.apply(v), v);
-						}
-					}
-
-					it = map.values().iterator();
-				}
-
-				if (it.hasNext()) {
-					return Nullable.of(it.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+	public default <TKey> Linq<T> unionBy(final Linq<T> right, final Function<T, TKey> keyFactory) {
+		return () -> new UnionByIterator<T, TKey>(iterator(), right.iterator(), keyFactory);
 	}
 
-	public default Linq<T> where(final Predicate<T> pred) {
-		return () -> new LinqIterator<T>() {
-			LinqIterator<T> it = Linq.this.iterator();
-
-			@Override
-			protected Nullable<T> get() {
-				while (it.hasNext()) {
-					var v = it.next();
-
-					if (pred.test(v)) {
-						return Nullable.of(v);
-					}
-				}
-
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				it.close();
-			}
-		};
+	public default Linq<T> where(final Predicate<T> predicatge) {
+		return () -> new WhereIterator<T>(iterator(), predicatge);
 	}
 
-	public default <T2> Linq<Tuple2<T, T2>> zip(final Linq<T2> right) {
-		return () -> new LinqIterator<Tuple2<T, T2>>() {
-			LinqIterator<T> l = Linq.this.iterator();
-			LinqIterator<T2> r = right.iterator();
-
-			@Override
-			protected Nullable<Tuple2<T, T2>> get() {
-				if (l.hasNext() && r.hasNext()) {
-					return Nullable.of(new Tuple2<T, T2>(l.next(), r.next()));
-				}
-				return Nullable.none();
-			}
-
-			@Override
-			protected void internalClose() {
-				try {
-					r.close();
-				} finally {
-					l.close();
-				}
-			}
-		};
+	public default <TRight> Linq<Tuple2<T, TRight>> zip(final Linq<TRight> right) {
+		return () -> new ZipIterator<T, TRight>(iterator(), right.iterator());
 	}
 
 }

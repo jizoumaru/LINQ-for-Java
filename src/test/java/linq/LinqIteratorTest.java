@@ -9,7 +9,7 @@ import java.util.NoSuchElementException;
 import org.junit.Test;
 
 import linq.Linq.LinqIterator;
-import linq.Linq.Nullable;
+import linq.Linq.Holder;
 
 public class LinqIteratorTest {
 	@Test
@@ -19,11 +19,11 @@ public class LinqIteratorTest {
 			int n = 3;
 
 			@Override
-			protected Nullable<Integer> get() {
+			protected Holder<Integer> get() {
 				if (i < n) {
-					return Nullable.of(i++);
+					return Holder.of(i++);
 				} else {
-					return Nullable.none();
+					return Holder.none();
 				}
 			}
 		};
@@ -64,11 +64,11 @@ public class LinqIteratorTest {
 			int n = 3;
 
 			@Override
-			protected Nullable<Integer> get() {
+			protected Holder<Integer> get() {
 				if (i < n) {
-					return Nullable.of(i++);
+					return Holder.of(i++);
 				} else {
-					return Nullable.none();
+					return Holder.none();
 				}
 			}
 		};
