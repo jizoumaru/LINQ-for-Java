@@ -3,6 +3,7 @@ package linq;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.NoSuchElementException;
 
@@ -13,29 +14,19 @@ import linq.Linq.Holder;
 public class HolderTest {
 	@Test
 	public void testOf() {
-		var n = Holder.of("a");
-		assertTrue(n.exists());
-		assertEquals("a", n.value());
+		assertTrue(Holder.of("a").exists());
+		assertEquals("a", Holder.of("a").value());
 	}
 
 	@Test
 	public void testNull() {
-		var n = Holder.of(null);
-		assertTrue(n.exists());
-		assertEquals(null, n.value());
+		assertTrue(Holder.of(null).exists());
+		assertEquals(null, Holder.of(null).value());
 	}
 
 	@Test
 	public void testNone() {
-		var n = Holder.none();
-		assertFalse(n.exists());
-
-		NoSuchElementException ex = null;
-		try {
-			n.value();
-		} catch (NoSuchElementException e) {
-			ex = e;
-		}
-		assertTrue(ex != null);
+		assertFalse(Holder.none().exists());
+		assertThrows(NoSuchElementException.class, () -> Holder.none().value());
 	}
 }

@@ -17,26 +17,30 @@ import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.Stream;
 
 @FunctionalInterface
-public interface Linq<T> extends Iterable<T> {
-	public static class AppendIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+public interface Linq<T> {
+	public static final class AppendFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final T value;
 		private boolean appended;
 
-		public AppendIterator(LinqIterator<T> iterator, T value) {
-			this.iterator = iterator;
+		public AppendFetch(FetchBase<T> fetch, T value) {
+			this.fetch = fetch;
 			this.value = value;
 			this.appended = false;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (iterator.hasNext()) {
-				return Holder.of(iterator.next());
+		protected final Holder<T> internalNext() {
+			var holder = fetch.next();
+
+			if (holder.exists()) {
+				return holder;
 			}
 
 			if (!appended) {
@@ -48,248 +52,276 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class ArrayIterator<T> extends LinqIterator<T> {
+	public static final class ArrayFetch<T> extends Fetch<T> {
 		private final T[] array;
 		private int index;
 
-		public ArrayIterator(T[] array) {
+		public ArrayFetch(T[] array) {
 			this.array = array;
 			this.index = 0;
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (index < array.length) {
 				return Holder.of(array[index++]);
 			}
 			return Holder.none();
 		}
+
+		@Override
+		protected final void internalClose() {
+		}
 	}
 
-	public static class CastIterator<T, U> extends LinqIterator<U> {
-		private final LinqIterator<T> iterator;
+	public static final class CastFetch<T, U> extends Fetch<U> {
+		private final FetchBase<T> fetch;
 
-		public CastIterator(LinqIterator<T> iterator) {
-			this.iterator = iterator;
+		public CastFetch(FetchBase<T> fetch) {
+			this.fetch = fetch;
 		}
 
 		@Override
-		protected Holder<U> get() {
-			if (iterator.hasNext()) {
+		protected final Holder<U> internalNext() {
+			var holder = fetch.next();
+
+			if (holder.exists()) {
 				@SuppressWarnings("unchecked")
-				var value = (U) iterator.next();
+				var value = (U) holder.value();
 				return Holder.of(value);
 			}
+
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class ChunkIterator<T> extends LinqIterator<List<T>> {
-		private final LinqIterator<T> iterator;
+	public static final class ChunkFetch<T> extends Fetch<List<T>> {
+		private final FetchBase<T> fetch;
 		private final int size;
 
-		public ChunkIterator(LinqIterator<T> iterator, int size) {
-			this.iterator = iterator;
+		public ChunkFetch(FetchBase<T> fetch, int size) {
+			this.fetch = fetch;
 			this.size = size;
 		}
 
 		@Override
-		protected Holder<List<T>> get() {
-			if (iterator.hasNext()) {
-				var list = new ArrayList<T>();
+		protected final Holder<List<T>> internalNext() {
+			var list = new ArrayList<T>();
 
-				for (var i = 0; i < size; i++) {
-					list.add(iterator.next());
+			for (var i = 0; i < size; i++) {
+				var holder = fetch.next();
 
-					if (!iterator.hasNext()) {
-						break;
-					}
+				if (!holder.exists()) {
+					break;
 				}
 
-				return Holder.of(list);
+				list.add(holder.value());
 			}
 
-			return Holder.none();
+			if (list.isEmpty()) {
+				return Holder.none();
+			}
+
+			return Holder.of(list);
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class ConcatIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> left;
-		private final LinqIterator<T> right;
+	public static final class ConcatFetch<T> extends Fetch<T> {
+		private final FetchBase<T> left;
+		private final FetchBase<T> right;
+		private FetchBase<T> fetch;
 
-		public ConcatIterator(LinqIterator<T> left, LinqIterator<T> right) {
+		public ConcatFetch(FetchBase<T> left, FetchBase<T> right) {
 			this.left = left;
 			this.right = right;
+			this.fetch = left;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (left.hasNext()) {
-				return Holder.of(left.next());
-			}
+		protected final Holder<T> internalNext() {
+			var holder = fetch.next();
 
-			if (right.hasNext()) {
-				return Holder.of(right.next());
+			if (holder.exists()) {
+				return holder;
+			} else {
+				if (fetch == left) {
+					fetch.close();
+					fetch = right;
+					return fetch.next();
+				}
+				return holder;
 			}
-
-			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _right = right;
+					var _left = left) {
 			}
 		}
 
 	}
 
-	public static class DefaultIfEmptyIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+	public static final class DefaultIfEmptyFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final T defaultValue;
-		private Boolean isEmpty;
-		private boolean ended;
+		private State state;
 
-		public DefaultIfEmptyIterator(LinqIterator<T> iterator, T defaultValue) {
-			this.iterator = iterator;
+		enum State {
+			DEFAULT, EMPTY, FETCH
+		}
+
+		public DefaultIfEmptyFetch(FetchBase<T> fetch, T defaultValue) {
+			this.fetch = fetch;
 			this.defaultValue = defaultValue;
-			this.isEmpty = null;
-			this.ended = false;
+			this.state = State.DEFAULT;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (isEmpty == null) {
-				isEmpty = !iterator.hasNext();
+		protected final Holder<T> internalNext() {
+			if (state == State.FETCH) {
+				return fetch.next();
 			}
 
-			if (isEmpty) {
-				if (!ended) {
-					ended = true;
+			if (state == State.DEFAULT) {
+				var holder = fetch.next();
+
+				if (holder.exists()) {
+					state = State.FETCH;
+					return holder;
+				} else {
+					state = State.EMPTY;
 					return Holder.of(defaultValue);
 				}
 			}
 
-			if (iterator.hasNext()) {
-				return Holder.of(iterator.next());
-			}
-
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class DistinctByIterator<T, K> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+	public static final class DistinctByFetch<T, K> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final Function<T, K> keyFactory;
-		private Iterator<T> values;
+		private Iterator<Holder<T>> iterator;
 
-		public DistinctByIterator(LinqIterator<T> iterator, Function<T, K> keyFactory) {
-			this.iterator = iterator;
+		public DistinctByFetch(FetchBase<T> fetch, Function<T, K> keyFactory) {
+			this.fetch = fetch;
 			this.keyFactory = keyFactory;
-			this.values = null;
+			this.iterator = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (values == null) {
-				var map = new LinkedHashMap<K, T>();
+		protected final Holder<T> internalNext() {
+			if (iterator == null) {
+				var map = new LinkedHashMap<K, Holder<T>>();
 
-				while (iterator.hasNext()) {
-					var value = iterator.next();
-					var key = keyFactory.apply(value);
-					map.putIfAbsent(key, value);
+				while (true) {
+					var holder = fetch.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					var key = keyFactory.apply(holder.value());
+					map.putIfAbsent(key, holder);
 				}
 
-				values = map.values().iterator();
+				iterator = map.values().iterator();
 			}
 
-			if (values.hasNext()) {
-				return Holder.of(values.next());
+			if (iterator.hasNext()) {
+				return iterator.next();
 			}
 
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class DistinctIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
-		private Iterator<T> values;
+	public static final class DistinctFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
+		private Iterator<Holder<T>> iterator;
 
-		public DistinctIterator(LinqIterator<T> iterator) {
-			this.iterator = iterator;
-			this.values = null;
+		public DistinctFetch(FetchBase<T> fetch) {
+			this.fetch = fetch;
+			this.iterator = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (values == null) {
-				var set = new LinkedHashSet<T>();
+		protected final Holder<T> internalNext() {
+			if (iterator == null) {
+				var set = new LinkedHashSet<Holder<T>>();
 
-				while (iterator.hasNext()) {
-					var value = iterator.next();
+				while (true) {
+					var holder = fetch.next();
 
-					if (!set.contains(value)) {
-						set.add(value);
+					if (!holder.exists()) {
+						break;
+					}
+
+					if (!set.contains(holder)) {
+						set.add(holder);
 					}
 				}
 
-				values = set.iterator();
+				iterator = set.iterator();
 			}
 
-			if (values.hasNext()) {
-				return Holder.of(values.next());
+			if (iterator.hasNext()) {
+				return iterator.next();
 			}
 
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class EmptyIterator<T> extends LinqIterator<T> {
+	public static final class EmptyFetch<T> extends Fetch<T> {
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			return Holder.none();
 		}
+
+		@Override
+		protected final void internalClose() {
+		}
 	}
 
-	public static class ExceptByIterator<T, K> extends LinqIterator<T> {
-		private final LinqIterator<T> left;
-		private final LinqIterator<T> right;
+	public static final class ExceptByFetch<T, K> extends Fetch<T> {
+		private final FetchBase<T> left;
+		private final FetchBase<T> right;
 		private final Function<T, K> keyFactory;
-		private Map<K, T> map;
+		private Map<K, Holder<T>> map;
 
-		public ExceptByIterator(LinqIterator<T> left, LinqIterator<T> right, Function<T, K> keyFactory) {
+		public ExceptByFetch(FetchBase<T> left, FetchBase<T> right, Function<T, K> keyFactory) {
 			this.left = left;
 			this.right = right;
 			this.keyFactory = keyFactory;
@@ -297,100 +329,865 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (map == null) {
-				map = new HashMap<K, T>();
+				map = new HashMap<K, Holder<T>>();
 
-				while (right.hasNext()) {
-					var value = right.next();
-					var key = keyFactory.apply(value);
-					map.put(key, value);
+				while (true) {
+					var holder = right.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					var key = keyFactory.apply(holder.value());
+					map.put(key, holder);
 				}
 			}
 
-			while (left.hasNext()) {
-				var value = left.next();
-				var key = keyFactory.apply(value);
+			while (true) {
+				var holder = left.next();
+
+				if (!holder.exists()) {
+					return holder;
+				}
+
+				var key = keyFactory.apply(holder.value());
 
 				if (!map.containsKey(key)) {
-					return Holder.of(value);
+					return holder;
 				}
 			}
-
-			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _left = left;
+					var _right = right) {
 			}
 		}
 	}
 
-	public static class ExceptIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> left;
-		private final LinqIterator<T> right;
-		private Set<T> set;
+	public static final class ExceptFetch<T> extends Fetch<T> {
+		private final FetchBase<T> left;
+		private final FetchBase<T> right;
+		private Set<Holder<T>> set;
 
-		public ExceptIterator(LinqIterator<T> left, LinqIterator<T> right) {
+		public ExceptFetch(FetchBase<T> left, FetchBase<T> right) {
 			this.left = left;
 			this.right = right;
 			this.set = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (set == null) {
-				set = new HashSet<T>();
+				set = new HashSet<Holder<T>>();
 
-				while (right.hasNext()) {
-					set.add(right.next());
+				while (true) {
+					var holder = right.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					set.add(holder);
 				}
 			}
 
-			while (left.hasNext()) {
-				var value = left.next();
+			while (true) {
+				var holder = left.next();
 
-				if (!set.contains(value)) {
-					return Holder.of(value);
+				if (!holder.exists()) {
+					return holder;
+				}
+
+				if (!set.contains(holder)) {
+					return holder;
 				}
 			}
-
-			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _left = left;
+					var _right = right) {
 			}
 		}
 	}
 
-	public static class GroupByIterator<T, K> extends LinqIterator<Entry<K, List<T>>> {
-		private final LinqIterator<T> iterator;
+	public static abstract class Fetch<T> extends FetchBase<T> {
+
+		public static final <T> EmptyFetch<T> empty() {
+			return new EmptyFetch<T>();
+		}
+
+		public static final <T> IterableFetch<T> from(final Iterable<T> iterable) {
+			return new IterableFetch<T>(iterable);
+		}
+
+		public static final <T> StreamFetch<T> from(final Stream<T> stream) {
+			return new StreamFetch<T>(stream);
+		}
+
+		@SafeVarargs
+		public static final <T> ArrayFetch<T> from(final T... xs) {
+			return new ArrayFetch<T>(xs);
+		}
+
+		public static final RangeFetch range(final int start, final int count) {
+			return new RangeFetch(start, count);
+		}
+
+		public static final <T> RepeatFetch<T> repeat(final T value, final int count) {
+			return new RepeatFetch<T>(value, count);
+		}
+
+		public final FetchIterator<T> iterator() {
+			return new FetchIterator<T>(this);
+		}
+
+		public final <TRight, TKey, TResult> GroupJoinFetch<T, TRight, TKey, TResult> groupJoin(
+				FetchBase<TRight> right,
+				Function<T, TKey> leftKeyFactory,
+				Function<TRight, TKey> rightKeyFactory,
+				BiFunction<T, Fetch<TRight>, TResult> resultFactory) {
+
+			return new GroupJoinFetch<T, TRight, TKey, TResult>(
+					this,
+					right,
+					leftKeyFactory,
+					rightKeyFactory,
+					resultFactory);
+		}
+
+		public final <TRight, TKey, TResult> JoinFetch<T, TRight, TKey, TResult> join(
+				FetchBase<TRight> right,
+				Function<T, TKey> leftKeyFactory,
+				Function<TRight, TKey> rightKeyFactory,
+				BiFunction<T, Fetch<TRight>, TResult> resultFactory) {
+
+			return new JoinFetch<T, TRight, TKey, TResult>(
+					this,
+					right,
+					leftKeyFactory,
+					rightKeyFactory,
+					resultFactory);
+		}
+
+		public final <U> CastFetch<T, U> cast() {
+			return new CastFetch<T, U>(this);
+		}
+
+		public final ChunkFetch<T> chunk(final int size) {
+			return new ChunkFetch<T>(this, size);
+		}
+
+		public final ConcatFetch<T> concat(final Fetch<T> right) {
+			return new ConcatFetch<T>(this, right);
+		}
+
+		public final AppendFetch<T> append(final T value) {
+			return new AppendFetch<T>(this, value);
+		}
+
+		public final DefaultIfEmptyFetch<T> defaultIfEmpty(final T defaultValue) {
+			return new DefaultIfEmptyFetch<T>(this, defaultValue);
+		}
+
+		public final DistinctFetch<T> distinct() {
+			return new DistinctFetch<T>(this);
+		}
+
+		public final <K> DistinctByFetch<T, K> distinctBy(final Function<T, K> keyFactory) {
+			return new DistinctByFetch<T, K>(this, keyFactory);
+		}
+
+		public final ExceptFetch<T> except(final Fetch<T> right) {
+			return new ExceptFetch<T>(this, right);
+		}
+
+		public final <K> ExceptByFetch<T, K> exceptBy(final Fetch<T> right, final Function<T, K> keyFactory) {
+			return new ExceptByFetch<T, K>(this, right, keyFactory);
+		}
+
+		public final <K> GroupByFetch<T, K> groupBy(final Function<T, K> keySelector) {
+			return new GroupByFetch<T, K>(this, keySelector);
+		}
+
+		public final IntersectFetch<T> intersect(final Fetch<T> right) {
+			return new IntersectFetch<T>(this, right);
+		}
+
+		public final <TKey> IntersectByFetch<T, TKey> intersectBy(final Fetch<TKey> right, final Function<T, TKey> keyFactory) {
+			return new IntersectByFetch<T, TKey>(this, right, keyFactory);
+		}
+
+		public final <U> TypeFetch<T, U> ofType(final Class<U> type) {
+			return new TypeFetch<T, U>(this, type);
+		}
+
+		public final <U extends Comparable<U>> OrderFetch<T> orderBy(final Function<T, U> keySelector) {
+			return new OrderFetch<T>(this, Comparator.comparing(keySelector));
+		}
+
+		public final <U extends Comparable<U>> OrderFetch<T> orderByDescending(final Function<T, U> keySelector) {
+			return new OrderFetch<T>(this, Comparator.comparing(keySelector, Comparator.reverseOrder()));
+		}
+
+		public final PrependFetch<T> prepend(T value) {
+			return new PrependFetch<T>(this, value);
+		}
+
+		public final ReverseFetch<T> reverse() {
+			return new ReverseFetch<T>(this);
+		}
+
+		public final <U> SelectFetch<T, U> select(final Function<T, U> mapper) {
+			return new SelectFetch<T, U>(this, mapper);
+		}
+
+		public final <U> SelectManyFetch<T, U> selectMany(final Function<T, FetchBase<U>> mapper) {
+			return new SelectManyFetch<T, U>(this, mapper);
+		}
+
+		public final TakeFetch<T> take(int count) {
+			return new TakeFetch<T>(this, count);
+		}
+
+		public final TakeLastFetch<T> takeLast(final int size) {
+			return new TakeLastFetch<T>(this, size);
+		}
+
+		public final TakeWhileFetch<T> takeWhile(Predicate<T> predicate) {
+			return new TakeWhileFetch<T>(this, predicate);
+		}
+
+		public final UnionFetch<T> union(final Linq<T> right) {
+			return new UnionFetch<T>(this, right.fetch());
+		}
+
+		public final <TKey> UnionByFetch<T, TKey> unionBy(final Linq<T> right, final Function<T, TKey> keyFactory) {
+			return new UnionByFetch<T, TKey>(this, right.fetch(), keyFactory);
+		}
+
+		public final WhereFetch<T> where(final Predicate<T> predicatge) {
+			return new WhereFetch<T>(this, predicatge);
+		}
+
+		public final <TRight> ZipFetch<T, TRight> zip(final Linq<TRight> right) {
+			return new ZipFetch<T, TRight>(this, right.fetch());
+		}
+
+		public final SkipFetch<T> skip(final long count) {
+			return new SkipFetch<T>(this, count);
+		}
+
+		public final SkipLastFetch<T> skipLast(final int size) {
+			return new SkipLastFetch<T>(this, size);
+		}
+
+		public final SkipWhileFetch<T> skipWhile(Predicate<T> predicate) {
+			return new SkipWhileFetch<T>(this, predicate);
+		}
+
+	}
+
+	public static abstract class FetchBase<T> implements AutoCloseable {
+		private boolean closed;
+		private Holder<T> peek;
+
+		public final Holder<T> peek() {
+			if (peek == null) {
+				peek = internalNext();
+			}
+			return peek;
+		}
+
+		public final Holder<T> next() {
+			if (peek == null) {
+				return internalNext();
+			} else {
+				var current = peek;
+				peek = null;
+				return current;
+			}
+		}
+
+		protected abstract Holder<T> internalNext();
+
+		@Override
+		public final void close() {
+			if (!closed) {
+				closed = true;
+				internalClose();
+			}
+		}
+
+		protected abstract void internalClose();
+
+		public final T aggregate(BiFunction<T, T, T> func) {
+			try (var _this = this) {
+				var result = next().value();
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return result;
+					}
+
+					result = func.apply(result, current.value());
+				}
+			}
+		}
+
+		public final T aggregate(T seed, BiFunction<T, T, T> func) {
+			try (var _this = this) {
+				var result = seed;
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return result;
+					}
+
+					result = func.apply(result, current.value());
+				}
+			}
+		}
+
+		public final boolean all(Predicate<T> predicate) {
+			try (var _this = this) {
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return true;
+					}
+
+					if (!predicate.test(current.value())) {
+						return false;
+					}
+				}
+			}
+		}
+
+		public final boolean any() {
+			try (var _this = this) {
+				return next().exists();
+			}
+		}
+
+		public final boolean any(Predicate<T> predicate) {
+			try (var _this = this) {
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return false;
+					}
+
+					if (predicate.test(current.value())) {
+						return true;
+					}
+				}
+			}
+		}
+
+		public final Long average(Function<T, Long> func) {
+			try (var _this = this) {
+				var sum = 0L;
+				var count = 0L;
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return sum / count;
+					}
+
+					sum += func.apply(current.value());
+					count++;
+				}
+			}
+		}
+
+		public final boolean contains(T target) {
+			try (var _this = this) {
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return false;
+					}
+
+					if (Objects.equals(target, current.value())) {
+						return true;
+					}
+				}
+			}
+		}
+
+		public final long count() {
+			try (var _this = this) {
+				var count = 0L;
+
+				while (next().exists()) {
+					count++;
+				}
+
+				return count;
+			}
+		}
+
+		public final T elementAt(long index) {
+			try (var _this = this) {
+				var count = 0L;
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						throw new IndexOutOfBoundsException();
+					}
+
+					if (count == index) {
+						return current.value();
+					}
+
+					count++;
+				}
+			}
+		}
+
+		public final T elementAtOrDefault(long index, T defaultValue) {
+			try (var _this = this) {
+				var count = 0L;
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return defaultValue;
+					}
+
+					if (count == index) {
+						return current.value();
+					}
+
+					count++;
+				}
+			}
+		}
+
+		public final T first() {
+			try (var _this = this) {
+				return next().value();
+			}
+		}
+
+		public final T firstOrDefault(T defaultValue) {
+			try (var _this = this) {
+				var first = next();
+
+				if (first.exists()) {
+					return first.value();
+				} else {
+					return defaultValue;
+				}
+			}
+		}
+
+		public final T last() {
+			try (var _this = this) {
+				var last = next();
+
+				if (last.exists()) {
+					while (true) {
+						var current = next();
+
+						if (!current.exists()) {
+							return last.value();
+						}
+
+						last = current;
+					}
+				} else {
+					return last.value();
+				}
+			}
+		}
+
+		public final T lastOrDefault(T defaultValue) {
+			try (var _this = this) {
+				var last = next();
+
+				if (last.exists()) {
+					while (true) {
+						var current = next();
+
+						if (!current.exists()) {
+							return last.value();
+						}
+
+						last = current;
+					}
+				} else {
+					return defaultValue;
+				}
+			}
+		}
+
+		public final T max(Comparator<T> comparator) {
+			try (var _this = this) {
+				var max = next();
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return max.value();
+					}
+
+					if (comparator.compare(max.value(), current.value()) < 0) {
+						max = current;
+					}
+				}
+			}
+		}
+
+		public final <TKey extends Comparable<TKey>> T maxBy(Function<T, TKey> keyFactory) {
+			try (var _this = this) {
+				var max = next();
+				var maxKey = keyFactory.apply(max.value());
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return max.value();
+					}
+
+					var currentKey = keyFactory.apply(current.value());
+
+					if (maxKey.compareTo(currentKey) < 0) {
+						max = current;
+						maxKey = currentKey;
+					}
+				}
+			}
+		}
+
+		public final <TKey> T maxBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
+			try (var _this = this) {
+				var max = next();
+				var maxKey = keyFactory.apply(max.value());
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return max.value();
+					}
+
+					var currentKey = keyFactory.apply(current.value());
+
+					if (keyComparator.compare(maxKey, currentKey) < 0) {
+						max = current;
+						maxKey = currentKey;
+					}
+				}
+			}
+		}
+
+		public final T min(Comparator<T> comparator) {
+			try (var _this = this) {
+				var min = next();
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return min.value();
+					}
+
+					if (comparator.compare(min.value(), current.value()) > 0) {
+						min = current;
+					}
+				}
+			}
+		}
+
+		public final <TKey extends Comparable<TKey>> T minBy(Function<T, TKey> keyFactory) {
+			try (var _this = this) {
+				var min = next();
+				var minKey = keyFactory.apply(min.value());
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return min.value();
+					}
+
+					var currentKey = keyFactory.apply(current.value());
+
+					if (minKey.compareTo(currentKey) > 0) {
+						min = current;
+						minKey = currentKey;
+					}
+				}
+			}
+		}
+
+		public final <TKey> T minBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
+			try (var _this = this) {
+				var min = next();
+				var minKey = keyFactory.apply(min.value());
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return min.value();
+					}
+
+					var currentKey = keyFactory.apply(current.value());
+
+					if (keyComparator.compare(minKey, currentKey) > 0) {
+						min = current;
+						minKey = currentKey;
+					}
+				}
+			}
+		}
+
+		public final boolean sequenceEqual(Fetch<T> right) {
+			try (var _right = right;
+					var _left = this) {
+
+				while (true) {
+					var l = _left.next();
+					var r = _right.next();
+
+					if (!l.exists() && !r.exists()) {
+						return true;
+					}
+
+					if (!Objects.equals(l, r)) {
+						return false;
+					}
+				}
+			}
+		}
+
+		public final T single() {
+			try (var _this = this) {
+				var current = next();
+
+				if (!current.exists()) {
+					throw new IllegalStateException("値が存在しません");
+				}
+
+				if (next().exists()) {
+					throw new IllegalStateException("値が複数存在します");
+				}
+
+				return current.value();
+			}
+		}
+
+		public final T singleOrDefault(T defaultValue) {
+			try (var _this = this) {
+				var current = next();
+
+				if (!current.exists()) {
+					return defaultValue;
+				}
+
+				if (next().exists()) {
+					throw new IllegalStateException("値が複数存在します");
+				}
+
+				return current.value();
+			}
+		}
+
+		public final long sum(Function<T, Long> func) {
+			try (var _this = this) {
+				var result = 0L;
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return result;
+					}
+
+					result += func.apply(current.value());
+				}
+			}
+		}
+
+		public final void forEach(Consumer<? super T> consumer) {
+			try (var _this = this) {
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return;
+					}
+
+					consumer.accept(current.value());
+				}
+			}
+		}
+
+		public final T[] toArray(T[] array) {
+			try (var _this = this) {
+				var list = new ArrayList<T>();
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return list.toArray(array);
+					}
+
+					list.add(current.value());
+				}
+			}
+		}
+
+		public final <K> LinkedHashMap<K, T> toDictionary(Function<T, K> keyFactory) {
+			try (var _this = this) {
+				var map = new LinkedHashMap<K, T>();
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return map;
+					}
+
+					var key = keyFactory.apply(current.value());
+
+					if (map.containsKey(key)) {
+						throw new IllegalArgumentException("キーが重複しています: " + key);
+					}
+
+					map.put(key, current.value());
+				}
+			}
+		}
+
+		public final LinkedHashSet<T> toHashSet() {
+			try (var _this = this) {
+				var set = new LinkedHashSet<T>();
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return set;
+					}
+
+					set.add(current.value());
+				}
+			}
+		}
+
+		public final ArrayList<T> toList() {
+			try (var _this = this) {
+				var list = new ArrayList<T>();
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return list;
+					}
+
+					list.add(current.value());
+				}
+			}
+		}
+
+		public final <K> LinkedHashMap<K, List<T>> toLookup(Function<T, K> keyFactory) {
+			try (var _this = this) {
+				var map = new LinkedHashMap<K, List<T>>();
+
+				while (true) {
+					var current = next();
+
+					if (!current.exists()) {
+						return map;
+					}
+
+					var key = keyFactory.apply(current.value());
+					var list = map.get(key);
+
+					if (list == null) {
+						list = new ArrayList<T>();
+						map.put(key, list);
+					}
+
+					list.add(current.value());
+				}
+			}
+		}
+
+	}
+
+	public static final class FetchIterator<T> implements Iterator<T>, AutoCloseable {
+		private final FetchBase<T> fetch;
+
+		public FetchIterator(FetchBase<T> fetch) {
+			this.fetch = fetch;
+		}
+
+		@Override
+		public final boolean hasNext() {
+			return fetch.peek().exists();
+		}
+
+		@Override
+		public final T next() {
+			return fetch.next().value();
+		}
+
+		@Override
+		public void close() {
+			fetch.close();
+		}
+	}
+
+	public static final class GroupByFetch<T, K> extends Fetch<Entry<K, List<T>>> {
+		private final FetchBase<T> fetch;
 		private final Function<T, K> keyFactory;
 		private Iterator<Entry<K, List<T>>> entries;
 
-		public GroupByIterator(LinqIterator<T> iterator, Function<T, K> keyFactory) {
-			this.iterator = iterator;
+		public GroupByFetch(FetchBase<T> fetch, Function<T, K> keyFactory) {
+			this.fetch = fetch;
 			this.keyFactory = keyFactory;
 			this.entries = null;
 		}
 
 		@Override
-		protected Holder<Entry<K, List<T>>> get() {
+		protected final Holder<Entry<K, List<T>>> internalNext() {
 			if (entries == null) {
 				var map = new LinkedHashMap<K, List<T>>();
 
-				while (iterator.hasNext()) {
-					var value = iterator.next();
-					var key = keyFactory.apply(value);
+				while (true) {
+					var holder = fetch.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					var key = keyFactory.apply(holder.value());
 					var values = map.get(key);
 
 					if (values == null) {
@@ -398,7 +1195,7 @@ public interface Linq<T> extends Iterable<T> {
 						map.put(key, values);
 					}
 
-					values.add(value);
+					values.add(holder.value());
 				}
 
 				entries = map.entrySet().iterator();
@@ -412,25 +1209,25 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class GroupJoinIterator<TLeft, TRight, TKey, TResult> extends LinqIterator<TResult> {
-		private final LinqIterator<TLeft> left;
-		private final LinqIterator<TRight> right;
+	public static final class GroupJoinFetch<TLeft, TRight, TKey, TResult> extends Fetch<TResult> {
+		private final FetchBase<TLeft> left;
+		private final FetchBase<TRight> right;
 		private final Function<TLeft, TKey> leftKeyFactory;
 		private final Function<TRight, TKey> rightKeyFactory;
-		private final BiFunction<TLeft, Linq<TRight>, TResult> resultFactory;
+		private final BiFunction<TLeft, Fetch<TRight>, TResult> resultFactory;
 		private Map<TKey, List<TRight>> map;
 
-		public GroupJoinIterator(
-				LinqIterator<TLeft> left,
-				LinqIterator<TRight> right,
+		public GroupJoinFetch(
+				FetchBase<TLeft> left,
+				FetchBase<TRight> right,
 				Function<TLeft, TKey> leftKeyFactory,
 				Function<TRight, TKey> rightKeyFactory,
-				BiFunction<TLeft, Linq<TRight>, TResult> resultFactory) {
+				BiFunction<TLeft, Fetch<TRight>, TResult> resultFactory) {
 			this.left = left;
 			this.right = right;
 			this.leftKeyFactory = leftKeyFactory;
@@ -440,13 +1237,18 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		protected Holder<TResult> get() {
+		protected final Holder<TResult> internalNext() {
 			if (map == null) {
 				map = new LinkedHashMap<TKey, List<TRight>>();
 
-				while (right.hasNext()) {
-					var value = right.next();
-					var key = rightKeyFactory.apply(value);
+				while (true) {
+					var holder = right.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					var key = rightKeyFactory.apply(holder.value());
 					var values = map.get(key);
 
 					if (values == null) {
@@ -454,41 +1256,40 @@ public interface Linq<T> extends Iterable<T> {
 						map.put(key, values);
 					}
 
-					values.add(value);
+					values.add(holder.value());
 				}
 			}
 
-			if (left.hasNext()) {
-				var value = left.next();
-				var key = leftKeyFactory.apply(value);
+			var holder = left.next();
+
+			if (holder.exists()) {
+				var key = leftKeyFactory.apply(holder.value());
 				var values = map.get(key);
 
 				if (values == null) {
 					values = new ArrayList<TRight>();
 				}
 
-				return Holder.of(resultFactory.apply(value, Linq.from(values)));
+				return Holder.of(resultFactory.apply(holder.value(), Fetch.from(values)));
 			}
 
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _left = left;
+					var _right = right) {
 			}
 		}
 	}
 
-	public static class Holder<T> {
-		public static <T> Holder<T> none() {
+	public static final class Holder<T> {
+		public static final <T> Holder<T> none() {
 			return new Holder<T>(null, false);
 		}
 
-		public static <T> Holder<T> of(T value) {
+		public static final <T> Holder<T> of(T value) {
 			return new Holder<T>(value, true);
 		}
 
@@ -500,27 +1301,46 @@ public interface Linq<T> extends Iterable<T> {
 			this.exist = exist;
 		}
 
-		public boolean exists() {
+		public final boolean exists() {
 			return exist;
 		}
 
-		public T value() {
+		public final T value() {
 			if (exist) {
 				return value;
 			}
 			throw new NoSuchElementException();
 		}
+
+		@Override
+		public final int hashCode() {
+			return Objects.hash(exist, value);
+		}
+
+		@Override
+		public final boolean equals(Object obj) {
+			if (this == obj) {
+				return true;
+			}
+			if (!(obj instanceof Holder)) {
+				return false;
+			}
+			@SuppressWarnings("unchecked")
+			var other = (Holder<T>) obj;
+			return exist == other.exist && Objects.equals(value, other.value);
+		}
+
 	}
 
-	public static class IntersectByIterator<TLeft, TKey> extends LinqIterator<TLeft> {
-		private final LinqIterator<TLeft> left;
-		private final LinqIterator<TKey> right;
+	public static final class IntersectByFetch<TLeft, TKey> extends Fetch<TLeft> {
+		private final FetchBase<TLeft> left;
+		private final FetchBase<TKey> right;
 		private final Function<TLeft, TKey> keyFactory;
 		private Set<TKey> set;
 
-		public IntersectByIterator(
-				LinqIterator<TLeft> left,
-				LinqIterator<TKey> right,
+		public IntersectByFetch(
+				FetchBase<TLeft> left,
+				FetchBase<TKey> right,
 				Function<TLeft, TKey> keyFactory) {
 			this.left = left;
 			this.right = right;
@@ -529,90 +1349,103 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		protected Holder<TLeft> get() {
+		protected final Holder<TLeft> internalNext() {
 			if (set == null) {
 				set = new HashSet<TKey>();
 
-				while (right.hasNext()) {
-					set.add(right.next());
+				while (true) {
+					var holder = right.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					set.add(holder.value());
 				}
 			}
 
-			while (left.hasNext()) {
-				var value = left.next();
-				var key = keyFactory.apply(value);
+			while (true) {
+				var holder = left.next();
+
+				if (!holder.exists()) {
+					return holder;
+				}
+
+				var key = keyFactory.apply(holder.value());
 
 				if (set.contains(key)) {
-					return Holder.of(value);
+					return holder;
 				}
 			}
-
-			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _left = left;
+					var _right = right) {
 			}
 		}
 	}
 
-	public static class IntersectIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> left;
-		private final LinqIterator<T> right;
-		private Set<T> set;
+	public static final class IntersectFetch<T> extends Fetch<T> {
+		private final FetchBase<T> left;
+		private final FetchBase<T> right;
+		private Set<Holder<T>> set;
 
-		public IntersectIterator(LinqIterator<T> left, LinqIterator<T> right) {
+		public IntersectFetch(FetchBase<T> left, FetchBase<T> right) {
 			this.left = left;
 			this.right = right;
 			this.set = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (set == null) {
-				set = new HashSet<T>();
+				set = new HashSet<Holder<T>>();
 
-				while (right.hasNext()) {
-					set.add(right.next());
+				while (true) {
+					var holder = right.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					set.add(holder);
 				}
 			}
 
-			while (left.hasNext()) {
-				var value = left.next();
+			while (true) {
+				var holder = left.next();
 
-				if (set.contains(value)) {
-					return Holder.of(value);
+				if (!holder.exists()) {
+					return holder;
+				}
+
+				if (set.contains(holder)) {
+					return holder;
 				}
 			}
-
-			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _left = left;
+					var _right = right) {
 			}
 		}
 	}
 
-	public static class IterableIterator<T> extends LinqIterator<T> {
+	public static final class IterableFetch<T> extends Fetch<T> {
 		private final Iterable<T> iterable;
 		private Iterator<T> iterator;
 
-		public IterableIterator(Iterable<T> iterable) {
+		public IterableFetch(Iterable<T> iterable) {
 			this.iterable = iterable;
 			this.iterator = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (iterator == null) {
 				iterator = iterable.iterator();
 			}
@@ -623,22 +1456,54 @@ public interface Linq<T> extends Iterable<T> {
 
 			return Holder.none();
 		}
+
+		@Override
+		protected final void internalClose() {
+		}
 	}
 
-	public static class JoinIterator<TLeft, TRight, TKey, TResult> extends LinqIterator<TResult> {
-		private final LinqIterator<TLeft> left;
-		private final LinqIterator<TRight> right;
+	public static final class StreamFetch<T> extends Fetch<T> {
+		private final Stream<T> stream;
+		private Iterator<T> iterator;
+
+		public StreamFetch(Stream<T> stream) {
+			this.stream = stream;
+			this.iterator = null;
+		}
+
+		@Override
+		protected final Holder<T> internalNext() {
+			if (iterator == null) {
+				iterator = stream.iterator();
+			}
+
+			if (iterator.hasNext()) {
+				return Holder.of(iterator.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected final void internalClose() {
+			stream.close();
+		}
+	}
+
+	public static final class JoinFetch<TLeft, TRight, TKey, TResult> extends Fetch<TResult> {
+		private final FetchBase<TLeft> left;
+		private final FetchBase<TRight> right;
 		private final Function<TLeft, TKey> leftKeyFactory;
 		private final Function<TRight, TKey> rightKeyFactory;
-		private final BiFunction<TLeft, Linq<TRight>, TResult> resultFactory;
+		private final BiFunction<TLeft, Fetch<TRight>, TResult> resultFactory;
 		private Map<TKey, List<TRight>> map;
 
-		public JoinIterator(
-				LinqIterator<TLeft> left,
-				LinqIterator<TRight> right,
+		public JoinFetch(
+				FetchBase<TLeft> left,
+				FetchBase<TRight> right,
 				Function<TLeft, TKey> leftKeyFactory,
 				Function<TRight, TKey> rightKeyFactory,
-				BiFunction<TLeft, Linq<TRight>, TResult> resultFactory) {
+				BiFunction<TLeft, Fetch<TRight>, TResult> resultFactory) {
 			this.left = left;
 			this.right = right;
 			this.leftKeyFactory = leftKeyFactory;
@@ -648,13 +1513,18 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		protected Holder<TResult> get() {
+		protected final Holder<TResult> internalNext() {
 			if (map == null) {
 				map = new LinkedHashMap<>();
 
-				while (right.hasNext()) {
-					var value = right.next();
-					var key = rightKeyFactory.apply(value);
+				while (true) {
+					var holder = right.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					var key = rightKeyFactory.apply(holder.value());
 					var values = map.get(key);
 
 					if (values == null) {
@@ -662,131 +1532,51 @@ public interface Linq<T> extends Iterable<T> {
 						map.put(key, values);
 					}
 
-					values.add(value);
+					values.add(holder.value());
 				}
 			}
 
-			while (left.hasNext()) {
-				var value = left.next();
-				var key = leftKeyFactory.apply(value);
+			while (true) {
+				var holder = left.next();
+
+				if (!holder.exists()) {
+					return Holder.none();
+				}
+
+				var key = leftKeyFactory.apply(holder.value());
 				var values = map.get(key);
 
 				if (values != null) {
-					return Holder.of(resultFactory.apply(value, Linq.from(values)));
+					return Holder.of(resultFactory.apply(holder.value(), Fetch.from(values)));
 				}
 			}
-
-			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _left = left;
+					var _right = right) {
 			}
 		}
 	}
 
-	public abstract static class LinqIterator<T> implements Iterator<T>, AutoCloseable {
-		private Holder<T> value = null;
-		private boolean closed = false;
+	public static final class OrderFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
+		private final Comparator<T> comparator;
+		private Iterator<T> iterator;
 
-		@Override
-		public void close() {
-			if (!closed) {
-				internalClose();
-				closed = true;
-			}
-		}
-
-		protected abstract Holder<T> get();
-
-		@Override
-		public boolean hasNext() {
-			if (value == null) {
-				value = get();
-				if (!value.exists()) {
-					close();
-				}
-			}
-			return value.exists();
-		}
-
-		protected void internalClose() {
+		public OrderFetch(FetchBase<T> fetch, Comparator<T> comparator) {
+			this.fetch = fetch;
+			this.comparator = comparator;
+			this.iterator = null;
 		}
 
 		@Override
-		public T next() {
-			if (hasNext()) {
-				var ret = value;
-				value = null;
-				return ret.value();
-			}
-			throw new NoSuchElementException();
-		}
-
-		@Override
-		public void remove() {
-			throw new RuntimeException("not supported");
-		}
-	}
-
-	public static class OrderingLinq<T> implements Linq<T> {
-		private final Linq<T> linq;
-		private final Comparator<T> cmp;
-
-		public OrderingLinq(Linq<T> linq, Comparator<T> cmp) {
-			this.linq = linq;
-			this.cmp = cmp;
-		}
-
-		@Override
-		public LinqIterator<T> iterator() {
-			var list = linq.toList();
-			Collections.sort(list, cmp);
-			return Linq.from(list).iterator();
-		}
-
-		public <U extends Comparable<U>> OrderingLinq<T> thenBy(final Function<T, U> keySelector) {
-			return new OrderingLinq<T>(this, (l, r) -> {
-				var c = OrderingLinq.this.cmp.compare(l, r);
-				if (c == 0) {
-					c = keySelector.apply(l).compareTo(keySelector.apply(r));
-				}
-				return c;
-			});
-		}
-
-		public <U extends Comparable<U>> OrderingLinq<T> thenByDescending(final Function<T, U> keySelector) {
-			return new OrderingLinq<T>(this, (l, r) -> {
-				var c = OrderingLinq.this.cmp.compare(l, r);
-				if (c == 0) {
-					c = keySelector.apply(r).compareTo(keySelector.apply(l));
-				}
-				return c;
-			});
-		}
-
-	}
-
-	public static class PrependIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
-		private final T value;
-		private boolean prepended;
-
-		public PrependIterator(LinqIterator<T> iterator, T value) {
-			this.iterator = iterator;
-			this.value = value;
-			this.prepended = false;
-		}
-
-		@Override
-		protected Holder<T> get() {
-			if (!prepended) {
-				prepended = true;
-				return Holder.of(value);
+		protected final Holder<T> internalNext() {
+			if (iterator == null) {
+				var list = fetch.toList();
+				Collections.sort(list, comparator);
+				iterator = list.iterator();
 			}
 
 			if (iterator.hasNext()) {
@@ -796,339 +1586,430 @@ public interface Linq<T> extends Iterable<T> {
 			return Holder.none();
 		}
 
+		public final <U extends Comparable<U>> OrderFetch<T> thenBy(final Function<T, U> keySelector) {
+			return new OrderFetch<T>(fetch, comparator.thenComparing(keySelector));
+		}
+
+		public final <U extends Comparable<U>> OrderFetch<T> thenByDescending(final Function<T, U> keySelector) {
+			return new OrderFetch<T>(fetch, comparator.thenComparing(keySelector, Comparator.reverseOrder()));
+		}
+
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class RangeIterator extends LinqIterator<Integer> {
+	public static final class PrependFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
+		private final T value;
+		private boolean prepended;
+
+		public PrependFetch(FetchBase<T> fetch, T value) {
+			this.fetch = fetch;
+			this.value = value;
+			this.prepended = false;
+		}
+
+		@Override
+		protected final Holder<T> internalNext() {
+			if (!prepended) {
+				prepended = true;
+				return Holder.of(value);
+			}
+			return fetch.next();
+		}
+
+		@Override
+		protected final void internalClose() {
+			fetch.close();
+		}
+	}
+
+	public static final class RangeFetch extends Fetch<Integer> {
 		private final int start;
 		private final int count;
 		private int index;
 
-		public RangeIterator(int start, int count) {
+		public RangeFetch(int start, int count) {
 			this.start = start;
 			this.count = count;
 			this.index = 0;
 		}
 
 		@Override
-		protected Holder<Integer> get() {
+		protected final Holder<Integer> internalNext() {
 			if (index < count) {
 				return Holder.of(start + (index++));
 			}
 			return Holder.none();
 		}
+
+		@Override
+		protected final void internalClose() {
+		}
 	}
 
-	public static class RepeatIterator<T> extends LinqIterator<T> {
+	public static final class RepeatFetch<T> extends Fetch<T> {
 		private final T value;
 		private final int count;
 		private int index;
 
-		public RepeatIterator(T value, int count) {
+		public RepeatFetch(T value, int count) {
 			this.value = value;
 			this.count = count;
 			this.index = 0;
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (index < count) {
 				index++;
 				return Holder.of(value);
 			}
 			return Holder.none();
 		}
+
+		@Override
+		protected final void internalClose() {
+		}
 	}
 
-	public static class ReverseIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
-		private Iterator<T> values;
+	public static final class ReverseFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
+		private Iterator<Holder<T>> iterator;
 
-		public ReverseIterator(LinqIterator<T> iterator) {
-			this.iterator = iterator;
-			this.values = null;
+		public ReverseFetch(FetchBase<T> fetch) {
+			this.fetch = fetch;
+			this.iterator = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (values == null) {
-				var list = new ArrayList<T>();
-				while (iterator.hasNext()) {
-					list.add(iterator.next());
+		protected final Holder<T> internalNext() {
+			if (iterator == null) {
+				var list = new ArrayList<Holder<T>>();
+
+				while (true) {
+					var holder = fetch.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					list.add(holder);
 				}
+
 				Collections.reverse(list);
-				values = list.iterator();
+				iterator = list.iterator();
 			}
 
-			if (values.hasNext()) {
-				return Holder.of(values.next());
-			}
-
-			return Holder.none();
-		}
-	}
-
-	public static class SelectIterator<T, U> extends LinqIterator<U> {
-		private final LinqIterator<T> iterator;
-		private final Function<T, U> mapper;
-
-		public SelectIterator(LinqIterator<T> iterator, Function<T, U> mapper) {
-			this.iterator = iterator;
-			this.mapper = mapper;
-		}
-
-		@Override
-		protected Holder<U> get() {
 			if (iterator.hasNext()) {
-				return Holder.of(mapper.apply(iterator.next()));
+				return iterator.next();
 			}
+
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class SelectMany<T, U> extends LinqIterator<U> {
-		private final LinqIterator<T> iterator;
-		private final Function<T, Linq<U>> mapper;
-		private LinqIterator<U> inner;
+	public static final class SelectFetch<T, U> extends Fetch<U> {
+		private final FetchBase<T> fetch;
+		private final Function<T, U> function;
 
-		public SelectMany(LinqIterator<T> iterator, Function<T, Linq<U>> mapper) {
-			this.iterator = iterator;
-			this.mapper = mapper;
-			this.inner = new EmptyIterator<U>();
+		public SelectFetch(FetchBase<T> iterator, Function<T, U> function) {
+			this.fetch = iterator;
+			this.function = function;
 		}
 
 		@Override
-		public void close() {
-			try {
-				if (inner != null) {
-					inner.close();
+		protected final Holder<U> internalNext() {
+			var holder = fetch.next();
+
+			if (holder.exists()) {
+				return Holder.of(function.apply(holder.value()));
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected final void internalClose() {
+			fetch.close();
+		}
+	}
+
+	public static final class SelectManyFetch<T, U> extends Fetch<U> {
+		private final FetchBase<T> fetch;
+		private final Function<T, FetchBase<U>> function;
+		private FetchBase<U> inner;
+
+		public SelectManyFetch(FetchBase<T> fetch, Function<T, FetchBase<U>> function) {
+			this.fetch = fetch;
+			this.function = function;
+			this.inner = new EmptyFetch<U>();
+		}
+
+		@Override
+		protected final Holder<U> internalNext() {
+			while (true) {
+				var holder = inner.next();
+
+				if (holder.exists()) {
+					return holder;
 				}
-			} finally {
-				iterator.close();
+
+				inner.close();
+				var innerHolder = fetch.next();
+
+				if (!innerHolder.exists()) {
+					return holder;
+				}
+
+				inner = function.apply(innerHolder.value());
 			}
 		}
 
 		@Override
-		protected Holder<U> get() {
-			while (!inner.hasNext() && iterator.hasNext()) {
-				inner = mapper.apply(iterator.next()).iterator();
+		protected final void internalClose() {
+			try (var _iterator = fetch;
+					var _inner = inner) {
 			}
-
-			if (inner.hasNext()) {
-				return Holder.of(inner.next());
-			}
-
-			return Holder.none();
 		}
 	}
 
-	public static class SkipIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
-		private final int count;
-		private int index;
+	public static final class SkipFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
+		private final long count;
+		private long index;
 
-		public SkipIterator(LinqIterator<T> iterator, int count) {
-			this.iterator = iterator;
+		public SkipFetch(FetchBase<T> fetch, long count) {
+			this.fetch = fetch;
 			this.count = count;
-			this.index = 0;
+			this.index = 0L;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			while (index < count && iterator.hasNext()) {
+		protected final Holder<T> internalNext() {
+			while (index < count) {
+				var holder = fetch.next();
+
+				if (!holder.exists()) {
+					return holder;
+				}
+
 				index++;
-				iterator.next();
 			}
 
-			if (iterator.hasNext()) {
-				return Holder.of(iterator.next());
-			}
-
-			return Holder.none();
+			return fetch.next();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class SkipLastIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+	public static final class SkipLastFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final int count;
-		private Queue<T> queue;
+		private Queue<Holder<T>> queue;
 
-		public SkipLastIterator(LinqIterator<T> iterator, int count) {
-			this.iterator = iterator;
+		public SkipLastFetch(FetchBase<T> fetch, int count) {
+			this.fetch = fetch;
 			this.count = count;
 			this.queue = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (queue == null) {
-				queue = new ArrayDeque<T>(count);
-				for (var i = 0; i < count && iterator.hasNext(); i++) {
-					queue.add(iterator.next());
+				queue = new ArrayDeque<Holder<T>>(count);
+
+				for (var i = 0; i < count; i++) {
+					var holder = fetch.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					queue.add(holder);
 				}
 			}
 
-			if (iterator.hasNext()) {
+			var holder = fetch.next();
+
+			if (holder.exists()) {
 				var value = queue.remove();
-				queue.add(iterator.next());
-				return Holder.of(value);
+				queue.add(holder);
+				return value;
 			}
 
-			return Holder.none();
+			return holder;
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class SkipWhileIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+	public static final class SkipWhileFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final Predicate<T> predicate;
 		private boolean skipped;
 
-		public SkipWhileIterator(LinqIterator<T> iterator, Predicate<T> predicate) {
-			this.iterator = iterator;
+		public SkipWhileFetch(FetchBase<T> fetch, Predicate<T> predicate) {
+			this.fetch = fetch;
 			this.predicate = predicate;
 			this.skipped = false;
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (!skipped) {
 				skipped = true;
 
-				while (iterator.hasNext()) {
-					var value = iterator.next();
+				while (true) {
+					var holder = fetch.next();
 
-					if (!predicate.test(value)) {
-						return Holder.of(value);
+					if (!holder.exists()) {
+						return holder;
+					}
+
+					if (!predicate.test(holder.value())) {
+						return holder;
 					}
 				}
-
-				return Holder.none();
 			}
 
-			if (iterator.hasNext()) {
-				return Holder.of(iterator.next());
-			}
-
-			return Holder.none();
+			return fetch.next();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class TakeIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+	public static final class TakeFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final int count;
 		private int index;
 
-		public TakeIterator(LinqIterator<T> iterator, int count) {
-			this.iterator = iterator;
+		public TakeFetch(FetchBase<T> fetch, int count) {
+			this.fetch = fetch;
 			this.count = count;
 			this.index = 0;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (index < count && iterator.hasNext()) {
+		protected final Holder<T> internalNext() {
+			if (index < count) {
+				var holder = fetch.next();
+
+				if (!holder.exists()) {
+					return holder;
+				}
+
 				index++;
-				return Holder.of(iterator.next());
+				return holder;
 			}
 
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class TakeLastIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+	public static final class TakeLastFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final int count;
-		private Queue<T> queue;
+		private Queue<Holder<T>> queue;
 
-		public TakeLastIterator(LinqIterator<T> iterator, int count) {
-			this.iterator = iterator;
+		public TakeLastFetch(FetchBase<T> fetch, int count) {
+			this.fetch = fetch;
 			this.count = count;
 			this.queue = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
+		protected final Holder<T> internalNext() {
 			if (queue == null) {
-				queue = new ArrayDeque<T>(count);
+				queue = new ArrayDeque<Holder<T>>(count);
 
-				while (iterator.hasNext()) {
+				while (true) {
+					var holder = fetch.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
 					if (queue.size() == count) {
 						queue.remove();
 					}
-					queue.add(iterator.next());
+
+					queue.add(holder);
 				}
 			}
 
 			if (queue.size() > 0) {
-				return Holder.of(queue.remove());
+				return queue.remove();
 			}
 
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class TakeWhileIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+	public static final class TakeWhileFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final Predicate<T> predicate;
+		private boolean terminated;
 
-		public TakeWhileIterator(LinqIterator<T> iterator, Predicate<T> predicate) {
-			this.iterator = iterator;
+		public TakeWhileFetch(FetchBase<T> fetch, Predicate<T> predicate) {
+			this.fetch = fetch;
 			this.predicate = predicate;
+			this.terminated = false;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (iterator.hasNext()) {
-				var value = iterator.next();
+		protected final Holder<T> internalNext() {
+			if (terminated) {
+				return Holder.none();
+			}
 
-				if (predicate.test(value)) {
-					return Holder.of(value);
+			var holder = fetch.next();
+
+			if (holder.exists()) {
+				if (predicate.test(holder.value())) {
+					return holder;
+				} else {
+					terminated = true;
+					return Holder.none();
 				}
 			}
 
-			return Holder.none();
+			return holder;
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class Tuple2<T1, T2> {
+	public static final class Tuple2<T1, T2> {
 		public final T1 value1;
 		public final T2 value2;
 
@@ -1138,7 +2019,7 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		public boolean equals(Object obj) {
+		public final boolean equals(Object obj) {
 			if (this == obj)
 				return true;
 			if (obj == null)
@@ -1151,32 +2032,36 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		public int hashCode() {
+		public final int hashCode() {
 			return Objects.hash(value1, value2);
 		}
 
 		@Override
-		public String toString() {
+		public final String toString() {
 			return "Tuple2 [value1=" + value1 + ", value2=" + value2 + "]";
 		}
 	}
 
-	public static class TypeIterator<T, U> extends LinqIterator<U> {
-		private final LinqIterator<T> iterator;
+	public static final class TypeFetch<T, U> extends Fetch<U> {
+		private final FetchBase<T> fetch;
 		private final Class<U> type;
 
-		public TypeIterator(LinqIterator<T> iterator, Class<U> type) {
-			this.iterator = iterator;
+		public TypeFetch(FetchBase<T> fetch, Class<U> type) {
+			this.fetch = fetch;
 			this.type = type;
 		}
 
 		@Override
-		protected Holder<U> get() {
-			while (iterator.hasNext()) {
-				var value = iterator.next();
+		protected final Holder<U> internalNext() {
+			while (true) {
+				var holder = fetch.next();
 
-				if (type.isInstance(value)) {
-					return Holder.of(type.cast(value));
+				if (!holder.exists()) {
+					break;
+				}
+
+				if (type.isInstance(holder.value())) {
+					return Holder.of(type.cast(holder.value()));
 				}
 			}
 
@@ -1184,710 +2069,471 @@ public interface Linq<T> extends Iterable<T> {
 		}
 
 		@Override
-		protected void internalClose() {
-			iterator.close();
+		protected final void internalClose() {
+			fetch.close();
 		}
 	}
 
-	public static class UnionByIterator<T, K> extends LinqIterator<T> {
-		private final LinqIterator<T> left;
-		private final LinqIterator<T> right;
+	public static final class UnionByFetch<T, K> extends Fetch<T> {
+		private final FetchBase<T> left;
+		private final FetchBase<T> right;
 		private final Function<T, K> keyFactory;
-		private Iterator<T> values;
+		private Iterator<Holder<T>> iterator;
 
-		public UnionByIterator(LinqIterator<T> left, LinqIterator<T> right, Function<T, K> keyFactory) {
+		public UnionByFetch(FetchBase<T> left, FetchBase<T> right, Function<T, K> keyFactory) {
 			this.left = left;
 			this.right = right;
 			this.keyFactory = keyFactory;
-			this.values = null;
+			this.iterator = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (values == null) {
-				var map = new LinkedHashMap<K, T>();
+		protected final Holder<T> internalNext() {
+			if (iterator == null) {
+				var map = new LinkedHashMap<K, Holder<T>>();
 
-				while (left.hasNext()) {
-					var value = left.next();
-					map.putIfAbsent(keyFactory.apply(value), value);
+				while (true) {
+					var holder = left.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					map.putIfAbsent(keyFactory.apply(holder.value()), holder);
 				}
 
-				while (right.hasNext()) {
-					var value = right.next();
-					map.putIfAbsent(keyFactory.apply(value), value);
+				while (true) {
+					var holder = right.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					map.putIfAbsent(keyFactory.apply(holder.value()), holder);
 				}
 
-				values = map.values().iterator();
+				iterator = map.values().iterator();
 			}
 
-			if (values.hasNext()) {
-				return Holder.of(values.next());
+			if (iterator.hasNext()) {
+				return iterator.next();
 			}
 
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _right = right;
+					var _left = left) {
 			}
 		}
 	}
 
-	public static class UnionIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> left;
-		private final LinqIterator<T> right;
-		private Iterator<T> values;
+	public static final class UnionFetch<T> extends Fetch<T> {
+		private final FetchBase<T> left;
+		private final FetchBase<T> right;
+		private Iterator<Holder<T>> iterator;
 
-		public UnionIterator(LinqIterator<T> left, LinqIterator<T> right) {
+		public UnionFetch(FetchBase<T> left, FetchBase<T> right) {
 			this.left = left;
 			this.right = right;
-			this.values = null;
+			this.iterator = null;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			if (values == null) {
-				var set = new LinkedHashSet<T>();
+		protected final Holder<T> internalNext() {
+			if (iterator == null) {
+				var set = new LinkedHashSet<Holder<T>>();
 
-				while (left.hasNext()) {
-					set.add(left.next());
+				while (true) {
+					var holder = left.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					set.add(holder);
 				}
 
-				while (right.hasNext()) {
-					set.add(right.next());
+				while (true) {
+					var holder = right.next();
+
+					if (!holder.exists()) {
+						break;
+					}
+
+					set.add(holder);
 				}
 
-				values = set.iterator();
+				iterator = set.iterator();
 			}
 
-			if (values.hasNext()) {
-				return Holder.of(values.next());
+			if (iterator.hasNext()) {
+				return iterator.next();
 			}
 
 			return Holder.none();
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _right = right;
+					var _left = left) {
 			}
 		}
 	}
 
-	public static class WhereIterator<T> extends LinqIterator<T> {
-		private final LinqIterator<T> iterator;
+	public static final class WhereFetch<T> extends Fetch<T> {
+		private final FetchBase<T> fetch;
 		private final Predicate<T> predicate;
 
-		public WhereIterator(LinqIterator<T> iterator, Predicate<T> predicate) {
-			this.iterator = iterator;
+		public WhereFetch(FetchBase<T> fetch, Predicate<T> predicate) {
+			this.fetch = fetch;
 			this.predicate = predicate;
 		}
 
 		@Override
-		protected Holder<T> get() {
-			while (iterator.hasNext()) {
-				var value = iterator.next();
+		protected final Holder<T> internalNext() {
+			while (true) {
+				var holder = fetch.next();
 
-				if (predicate.test(value)) {
-					return Holder.of(value);
+				if (!holder.exists()) {
+					return holder;
+				}
+
+				if (predicate.test(holder.value())) {
+					return holder;
 				}
 			}
-
-			return Holder.none();
 		}
 
 		@Override
 		protected void internalClose() {
-			iterator.close();
+			fetch.close();
 		}
 	}
 
-	public static class ZipIterator<TLeft, TRight> extends LinqIterator<Tuple2<TLeft, TRight>> {
-		private final LinqIterator<TLeft> left;
-		private final LinqIterator<TRight> right;
+	public static final class ZipFetch<TLeft, TRight> extends Fetch<Tuple2<TLeft, TRight>> {
+		private final FetchBase<TLeft> left;
+		private final FetchBase<TRight> right;
 
-		public ZipIterator(LinqIterator<TLeft> left, LinqIterator<TRight> right) {
+		public ZipFetch(FetchBase<TLeft> left, FetchBase<TRight> right) {
 			this.left = left;
 			this.right = right;
 		}
 
 		@Override
-		protected Holder<Tuple2<TLeft, TRight>> get() {
-			if (left.hasNext() && right.hasNext()) {
-				return Holder.of(new Tuple2<TLeft, TRight>(left.next(), right.next()));
+		protected final Holder<Tuple2<TLeft, TRight>> internalNext() {
+			var leftHolder = left.next();
+
+			if (!leftHolder.exists()) {
+				return Holder.none();
 			}
-			return Holder.none();
+
+			var rightHolder = right.next();
+
+			if (!rightHolder.exists()) {
+				return Holder.none();
+			}
+
+			return Holder.of(new Tuple2<TLeft, TRight>(leftHolder.value(), rightHolder.value()));
 		}
 
 		@Override
-		protected void internalClose() {
-			try {
-				left.close();
-			} finally {
-				right.close();
+		protected final void internalClose() {
+			try (var _right = right;
+					var _left = left) {
 			}
+		}
+	}
+
+	@FunctionalInterface
+	public interface OrderLinq<T> extends Linq<T> {
+		@Override
+		OrderFetch<T> fetch();
+
+		public default <U extends Comparable<U>> OrderLinq<T> thenBy(final Function<T, U> keySelector) {
+			return () -> fetch().thenBy(keySelector);
+		}
+
+		public default <U extends Comparable<U>> OrderLinq<T> thenByDescending(final Function<T, U> keySelector) {
+			return () -> fetch().thenByDescending(keySelector);
 		}
 	}
 
 	public static <T> Linq<T> empty() {
-		return () -> new EmptyIterator<T>();
+		return () -> Fetch.empty();
 	}
 
 	public static <T> Linq<T> from(final Iterable<T> iterable) {
-		return () -> new IterableIterator<T>(iterable);
+		return () -> Fetch.from(iterable);
+	}
+
+	public static <T> Linq<T> from(final Stream<T> stream) {
+		return () -> Fetch.from(stream);
 	}
 
 	@SafeVarargs
 	public static <T> Linq<T> from(final T... xs) {
-		return () -> new ArrayIterator<T>(xs);
+		return () -> Fetch.from(xs);
 	}
 
 	public static Linq<Integer> range(final int start, final int count) {
-		return () -> new RangeIterator(start, count);
+		return () -> Fetch.range(start, count);
 	}
 
 	public static <T> Linq<T> repeat(final T value, final int count) {
-		return () -> new RepeatIterator<T>(value, count);
+		return () -> Fetch.repeat(value, count);
 	}
 
-	public default Holder<T> aggregate(BiFunction<T, T, T> func) {
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				var result = iterator.next();
-				while (iterator.hasNext()) {
-					result = func.apply(result, iterator.next());
-				}
-				return Holder.of(result);
-			}
-			return Holder.none();
-		}
+	Fetch<T> fetch();
+
+	public default <TRight, TKey, TResult> Linq<TResult> groupJoin(Linq<TRight> right, Function<T, TKey> leftKeyFactory, Function<TRight, TKey> rightKeyFactory, BiFunction<T, Linq<TRight>, TResult> resultFactory) {
+		return () -> fetch().groupJoin(right.fetch(), leftKeyFactory, rightKeyFactory, (l, r) -> resultFactory.apply(l, () -> r));
+	}
+
+	public default T aggregate(BiFunction<T, T, T> func) {
+		return fetch().aggregate(func);
 	}
 
 	public default T aggregate(T seed, BiFunction<T, T, T> func) {
-		try (var iterator = iterator()) {
-			var result = seed;
-			while (iterator.hasNext()) {
-				result = func.apply(result, iterator.next());
-			}
-			return result;
-		}
+		return fetch().aggregate(seed, func);
+	}
+
+	public default <TRight, TKey, TResult> Linq<TResult> join(Linq<TRight> right, Function<T, TKey> leftKeyFactory, Function<TRight, TKey> rightKeyFactory, BiFunction<T, Linq<TRight>, TResult> resultFactory) {
+		return () -> fetch().join(right.fetch(), leftKeyFactory, rightKeyFactory, (l, r) -> resultFactory.apply(l, () -> r));
 	}
 
 	public default boolean all(Predicate<T> predicate) {
-		try (var iterator = iterator()) {
-			while (iterator.hasNext()) {
-				if (!predicate.test(iterator.next())) {
-					return false;
-				}
-			}
-			return true;
-		}
-	}
-
-	public default boolean any(Predicate<T> predicate) {
-		try (var iterator = iterator()) {
-			while (iterator.hasNext()) {
-				if (predicate.test(iterator.next())) {
-					return true;
-				}
-			}
-			return false;
-		}
-	}
-
-	public default Linq<T> append(final T value) {
-		return () -> new AppendIterator<T>(iterator(), value);
-	}
-
-	public default Holder<Long> average(Function<T, Long> func) {
-		var sum = 0L;
-
-		try (var iterator = iterator()) {
-			while (iterator.hasNext()) {
-				sum += func.apply(iterator.next());
-			}
-		}
-
-		var count = 0L;
-
-		try (var iterator = iterator()) {
-			while (iterator.hasNext()) {
-				iterator.next();
-				count++;
-			}
-		}
-
-		if (count != 0L) {
-			return Holder.of(sum / count);
-		}
-
-		return Holder.none();
+		return fetch().all(predicate);
 	}
 
 	public default <U> Linq<U> cast() {
-		return () -> new CastIterator<T, U>(iterator());
+		return () -> fetch().cast();
 	}
 
-	public default Linq<List<T>> chunk(final int size) {
-		return () -> new ChunkIterator<T>(iterator(), size);
+	public default boolean any() {
+		return fetch().any();
 	}
 
-	public default Linq<T> concat(final Linq<T> right) {
-		return () -> new ConcatIterator<T>(iterator(), right.iterator());
+	public default boolean any(Predicate<T> predicate) {
+		return fetch().any(predicate);
 	}
 
-	public default boolean contains(T target) {
-		try (var iterator = iterator()) {
-			while (iterator.hasNext()) {
-				if (Objects.equals(iterator.next(), target)) {
-					return true;
-				}
-			}
-			return false;
-		}
+	public default Linq<List<T>> chunk(int size) {
+		return () -> fetch().chunk(size);
 	}
 
-	public default long count() {
-		try (var iterator = iterator()) {
-			var count = 0L;
-			while (iterator.hasNext()) {
-				iterator.next();
-				count++;
-			}
-			return count;
-		}
+	public default Linq<T> concat(Linq<T> right) {
+		return () -> fetch().concat(right.fetch());
 	}
 
-	public default Linq<T> defaultIfEmpty(final T defaultValue) {
-		return () -> new DefaultIfEmptyIterator<T>(iterator(), defaultValue);
+	public default Linq<T> append(T value) {
+		return () -> fetch().append(value);
+	}
+
+	public default Long average(Function<T, Long> func) {
+		return fetch().average(func);
+	}
+
+	public default Linq<T> defaultIfEmpty(T defaultValue) {
+		return () -> fetch().defaultIfEmpty(defaultValue);
 	}
 
 	public default Linq<T> distinct() {
-		return () -> new DistinctIterator<T>(iterator());
+		return () -> fetch().distinct();
 	}
 
-	public default <K> Linq<T> distinctBy(final Function<T, K> keyFactory) {
-		return () -> new DistinctByIterator<T, K>(iterator(), keyFactory);
+	public default <K> Linq<T> distinctBy(Function<T, K> keyFactory) {
+		return () -> fetch().distinctBy(keyFactory);
 	}
 
-	public default Holder<T> elementAt(long index) {
-		try (var iterator = iterator()) {
-			var count = 0L;
-
-			while (iterator.hasNext()) {
-				var value = iterator.next();
-
-				if (count == index) {
-					return Holder.of(value);
-				}
-
-				count++;
-			}
-
-			return Holder.none();
-		}
+	public default boolean contains(T target) {
+		return fetch().contains(target);
 	}
 
-	public default T elementAt(long index, T defaultValue) {
-		try (var iterator = iterator()) {
-			var count = 0L;
-
-			while (iterator.hasNext()) {
-				var value = iterator.next();
-
-				if (count == index) {
-					return value;
-				}
-
-				count++;
-			}
-
-			return defaultValue;
-		}
+	public default Linq<T> except(Linq<T> right) {
+		return () -> fetch().except(right.fetch());
 	}
 
-	public default Linq<T> except(final Linq<T> right) {
-		return () -> new ExceptIterator<T>(iterator(), right.iterator());
+	public default <K> Linq<T> exceptBy(Linq<T> right, Function<T, K> keyFactory) {
+		return () -> fetch().exceptBy(right.fetch(), keyFactory);
 	}
 
-	public default <K> Linq<T> exceptBy(final Linq<T> right, final Function<T, K> keyFactory) {
-		return () -> new ExceptByIterator<T, K>(iterator(), right.iterator(), keyFactory);
+	public default long count() {
+		return fetch().count();
 	}
 
-	public default Holder<T> first() {
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				return Holder.of(iterator.next());
-			}
-			return Holder.none();
-		}
+	public default <K> Linq<Entry<K, List<T>>> groupBy(Function<T, K> keySelector) {
+		return () -> fetch().groupBy(keySelector);
+	}
+
+	public default T elementAt(long index) {
+		return fetch().elementAt(index);
+	}
+
+	public default Linq<T> intersect(Linq<T> right) {
+		return () -> fetch().intersect(right.fetch());
+	}
+
+	public default <TKey> Linq<T> intersectBy(Linq<TKey> right, Function<T, TKey> keyFactory) {
+		return () -> fetch().intersectBy(right.fetch(), keyFactory);
+	}
+
+	public default T elementAtOrDefault(long index, T defaultValue) {
+		return fetch().elementAtOrDefault(index, defaultValue);
+	}
+
+	public default <U> Linq<U> ofType(Class<U> type) {
+		return () -> fetch().ofType(type);
+	}
+
+	public default <U extends Comparable<U>> OrderLinq<T> orderBy(Function<T, U> keySelector) {
+		return () -> fetch().orderBy(keySelector);
+	}
+
+	public default T first() {
+		return fetch().first();
+	}
+
+	public default <U extends Comparable<U>> OrderLinq<T> orderByDescending(Function<T, U> keySelector) {
+		return () -> fetch().orderByDescending(keySelector);
 	}
 
 	public default T firstOrDefault(T defaultValue) {
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				return iterator.next();
-			}
-			return defaultValue;
-		}
-	}
-
-	public default <K> Linq<Entry<K, List<T>>> groupBy(final Function<T, K> keySelector) {
-		return () -> new GroupByIterator<T, K>(iterator(), keySelector);
-	}
-
-	public default <TRight, TKey, TResult> Linq<TResult> groupJoin(
-			Linq<TRight> right,
-			Function<T, TKey> leftKeyFactory,
-			Function<TRight, TKey> rightKeyFactory,
-			BiFunction<T, Linq<TRight>, TResult> resultFactory) {
-
-		return () -> new GroupJoinIterator<T, TRight, TKey, TResult>(
-				iterator(),
-				right.iterator(),
-				leftKeyFactory,
-				rightKeyFactory,
-				resultFactory);
-	}
-
-	public default Linq<T> intersect(final Linq<T> right) {
-		return () -> new IntersectIterator<T>(iterator(), right.iterator());
-	}
-
-	public default <TKey> Linq<T> intersectBy(final Linq<TKey> right, final Function<T, TKey> keyFactory) {
-		return () -> new IntersectByIterator<T, TKey>(iterator(), right.iterator(), keyFactory);
-	}
-
-	@Override
-	public abstract LinqIterator<T> iterator();
-
-	public default <TRight, TKey, TResult> Linq<TResult> join(
-			Linq<TRight> right,
-			Function<T, TKey> leftKeyFactory,
-			Function<TRight, TKey> rightKeyFactory,
-			BiFunction<T, Linq<TRight>, TResult> resultFactory) {
-
-		return () -> new JoinIterator<T, TRight, TKey, TResult>(
-				iterator(),
-				right.iterator(),
-				leftKeyFactory,
-				rightKeyFactory,
-				resultFactory);
-	}
-
-	public default Holder<T> last() {
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				T value;
-				do {
-					value = iterator.next();
-				} while (iterator.hasNext());
-
-				return Holder.of(value);
-			}
-
-			return Holder.none();
-		}
-	}
-
-	public default Holder<T> max(Comparator<T> comparator) {
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				var result = iterator.next();
-
-				while (iterator.hasNext()) {
-					var value = iterator.next();
-
-					if (comparator.compare(result, value) < 0) {
-						result = value;
-					}
-				}
-
-				return Holder.of(result);
-			}
-
-			return Holder.none();
-		}
-	}
-
-	public default <TKey> Holder<T> maxBy(
-			Comparator<TKey> keyComparator,
-			Function<T, TKey> keyFactory) {
-
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				var resultValue = iterator.next();
-				var resultKey = keyFactory.apply(resultValue);
-
-				while (iterator.hasNext()) {
-					var value = iterator.next();
-					var key = keyFactory.apply(value);
-
-					if (keyComparator.compare(resultKey, key) < 0) {
-						resultValue = value;
-						resultKey = key;
-					}
-				}
-
-				return Holder.of(resultValue);
-			}
-
-			return Holder.none();
-		}
-	}
-
-	public default Holder<T> min(Comparator<T> comparator) {
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				var result = iterator.next();
-
-				while (iterator.hasNext()) {
-					var value = iterator.next();
-
-					if (comparator.compare(value, result) < 0) {
-						result = value;
-					}
-				}
-
-				return Holder.of(result);
-			}
-
-			return Holder.none();
-		}
-	}
-
-	public default <TKey> Holder<T> minBy(
-			Comparator<TKey> keyComparator,
-			Function<T, TKey> keyFactory) {
-
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				var resultValue = iterator.next();
-				var resultKey = keyFactory.apply(resultValue);
-
-				while (iterator.hasNext()) {
-					var value = iterator.next();
-					var key = keyFactory.apply(value);
-
-					if (keyComparator.compare(key, resultKey) < 0) {
-						resultValue = value;
-						resultKey = key;
-					}
-				}
-
-				return Holder.of(resultValue);
-			}
-
-			return Holder.none();
-		}
-	}
-
-	public default <U> Linq<U> ofType(final Class<U> type) {
-		return () -> new TypeIterator<T, U>(iterator(), type);
-	}
-
-	public default <U extends Comparable<U>> OrderingLinq<T> orderBy(final Function<T, U> keySelector) {
-		return new OrderingLinq<T>(this, (x, y) -> keySelector.apply(x).compareTo(keySelector.apply(y)));
-	}
-
-	public default <U extends Comparable<U>> OrderingLinq<T> orderByDescending(final Function<T, U> keySelector) {
-		return new OrderingLinq<T>(this, (l, r) -> keySelector.apply(r).compareTo(keySelector.apply(l)));
+		return fetch().firstOrDefault(defaultValue);
 	}
 
 	public default Linq<T> prepend(T value) {
-		return () -> new PrependIterator<T>(iterator(), value);
+		return () -> fetch().prepend(value);
+	}
+
+	public default T last() {
+		return fetch().last();
 	}
 
 	public default Linq<T> reverse() {
-		return () -> new ReverseIterator<T>(iterator());
+		return () -> fetch().reverse();
 	}
 
-	public default <U> Linq<U> select(final Function<T, U> mapper) {
-		return () -> new SelectIterator<T, U>(iterator(), mapper);
+	public default <U> Linq<U> select(Function<T, U> mapper) {
+		return () -> fetch().select(mapper);
 	}
 
-	public default <U> Linq<U> selectMany(final Function<T, Linq<U>> mapper) {
-		return () -> new SelectMany<T, U>(iterator(), mapper);
+	public default <U> Linq<U> selectMany(Function<T, Linq<U>> mapper) {
+		return () -> fetch().selectMany(x -> mapper.apply(x).fetch());
 	}
 
-	public default boolean sequenceEqual(Linq<T> rightLinq) {
-		try (var left = iterator(); var right = rightLinq.iterator()) {
-
-			while (left.hasNext() && right.hasNext()) {
-				if (!Objects.equals(left.next(), right.next())) {
-					return false;
-				}
-			}
-
-			return left.hasNext() == right.hasNext();
-		}
-	}
-
-	public default T single() {
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				var value = iterator.next();
-
-				if (iterator.hasNext()) {
-					throw new IllegalStateException("値が複数存在します");
-				}
-
-				return value;
-			}
-
-			throw new IllegalStateException("値が存在しません");
-		}
-	}
-
-	public default T single(T defaultValue) {
-		try (var iterator = iterator()) {
-			if (iterator.hasNext()) {
-				var value = iterator.next();
-
-				if (iterator.hasNext()) {
-					throw new IllegalStateException("値が複数存在します");
-				}
-
-				return value;
-			}
-
-			return defaultValue;
-		}
-	}
-
-	public default Linq<T> skip(final int count) {
-		return () -> new SkipIterator<T>(iterator(), count);
-	}
-
-	public default Linq<T> skipLast(final int size) {
-		return () -> new SkipLastIterator<T>(iterator(), size);
-	}
-
-	public default Linq<T> skipWhile(Predicate<T> predicate) {
-		return () -> new SkipWhileIterator<T>(iterator(), predicate);
-	}
-
-	public default long sum(Function<T, Long> func) {
-		try (var iterator = iterator()) {
-			var result = 0L;
-
-			while (iterator.hasNext()) {
-				result += func.apply(iterator.next());
-			}
-
-			return result;
-		}
+	public default T lastOrDefault(T defaultValue) {
+		return fetch().lastOrDefault(defaultValue);
 	}
 
 	public default Linq<T> take(int count) {
-		return () -> new TakeIterator<T>(iterator(), count);
+		return () -> fetch().take(count);
 	}
 
-	public default Linq<T> takeLast(final int size) {
-		return () -> new TakeLastIterator<T>(iterator(), size);
+	public default Linq<T> takeLast(int size) {
+		return () -> fetch().takeLast(size);
+	}
+
+	public default T max(Comparator<T> comparator) {
+		return fetch().max(comparator);
 	}
 
 	public default Linq<T> takeWhile(Predicate<T> predicate) {
-		return () -> new TakeWhileIterator<T>(iterator(), predicate);
+		return () -> fetch().takeWhile(predicate);
+	}
+
+	public default Linq<T> union(Linq<T> right) {
+		return () -> fetch().union(right);
+	}
+
+	public default <TKey> Linq<T> unionBy(Linq<T> right, Function<T, TKey> keyFactory) {
+		return () -> fetch().unionBy(right, keyFactory);
+	}
+
+	public default <TKey extends Comparable<TKey>> T maxBy(Function<T, TKey> keyFactory) {
+		return fetch().maxBy(keyFactory);
+	}
+
+	public default <TKey> T maxBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
+		return fetch().maxBy(keyFactory, keyComparator);
+	}
+
+	public default Linq<T> where(Predicate<T> predicatge) {
+		return () -> fetch().where(predicatge);
+	}
+
+	public default <TRight> Linq<Tuple2<T, TRight>> zip(Linq<TRight> right) {
+		return () -> fetch().zip(right);
+	}
+
+	public default Linq<T> skip(long count) {
+		return () -> fetch().skip(count);
+	}
+
+	public default Linq<T> skipLast(int size) {
+		return () -> fetch().skipLast(size);
+	}
+
+	public default T min(Comparator<T> comparator) {
+		return fetch().min(comparator);
+	}
+
+	public default Linq<T> skipWhile(Predicate<T> predicate) {
+		return () -> fetch().skipWhile(predicate);
+	}
+
+	public default <TKey extends Comparable<TKey>> T minBy(Function<T, TKey> keyFactory) {
+		return fetch().minBy(keyFactory);
+	}
+
+	public default <TKey> T minBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
+		return fetch().minBy(keyFactory, keyComparator);
+	}
+
+	public default boolean sequenceEqual(Linq<T> right) {
+		return fetch().sequenceEqual(right.fetch());
+	}
+
+	public default T single() {
+		return fetch().single();
+	}
+
+	public default T singleOrDefault(T defaultValue) {
+		return fetch().singleOrDefault(defaultValue);
+	}
+
+	public default long sum(Function<T, Long> func) {
+		return fetch().sum(func);
 	}
 
 	public default T[] toArray(T[] array) {
-		try (var iterator = iterator()) {
-			var list = new ArrayList<T>();
-
-			while (iterator.hasNext()) {
-				list.add(iterator.next());
-			}
-
-			return list.toArray(array);
-		}
+		return fetch().toArray(array);
 	}
 
 	public default <K> LinkedHashMap<K, T> toDictionary(Function<T, K> keyFactory) {
-		try (var iterator = iterator()) {
-			var map = new LinkedHashMap<K, T>();
-
-			while (iterator.hasNext()) {
-				var value = iterator.next();
-				var key = keyFactory.apply(value);
-
-				if (map.containsKey(key)) {
-					throw new IllegalArgumentException("キーが重複しています: " + key);
-				}
-
-				map.put(key, value);
-			}
-
-			return map;
-		}
+		return fetch().toDictionary(keyFactory);
 	}
 
 	public default LinkedHashSet<T> toHashSet() {
-		try (var iterator = iterator()) {
-			var set = new LinkedHashSet<T>();
-
-			while (iterator.hasNext()) {
-				set.add(iterator.next());
-			}
-
-			return set;
-		}
+		return fetch().toHashSet();
 	}
 
 	public default ArrayList<T> toList() {
-		try (var iterator = iterator()) {
-			var list = new ArrayList<T>();
-
-			while (iterator.hasNext()) {
-				list.add(iterator.next());
-			}
-
-			return list;
-		}
+		return fetch().toList();
 	}
 
 	public default <K> LinkedHashMap<K, List<T>> toLookup(Function<T, K> keyFactory) {
-		try (var iterator = iterator()) {
-			var map = new LinkedHashMap<K, List<T>>();
-
-			while (iterator.hasNext()) {
-				var value = iterator.next();
-				var key = keyFactory.apply(value);
-				var list = map.get(key);
-
-				if (list == null) {
-					list = new ArrayList<T>();
-					map.put(key, list);
-				}
-
-				list.add(value);
-			}
-
-			return map;
-		}
+		return fetch().toLookup(keyFactory);
 	}
 
-	public default Linq<T> union(final Linq<T> right) {
-		return () -> new UnionIterator<T>(iterator(), right.iterator());
+	public default FetchIterator<T> iterator() {
+		return fetch().iterator();
 	}
 
-	public default <TKey> Linq<T> unionBy(final Linq<T> right, final Function<T, TKey> keyFactory) {
-		return () -> new UnionByIterator<T, TKey>(iterator(), right.iterator(), keyFactory);
+	public default void forEach(Consumer<? super T> consumer) {
+		fetch().forEach(consumer);
 	}
-
-	public default Linq<T> where(final Predicate<T> predicatge) {
-		return () -> new WhereIterator<T>(iterator(), predicatge);
-	}
-
-	public default <TRight> Linq<Tuple2<T, TRight>> zip(final Linq<TRight> right) {
-		return () -> new ZipIterator<T, TRight>(iterator(), right.iterator());
-	}
-
 }
