@@ -24,39 +24,6 @@ import java.util.stream.Stream;
 
 @FunctionalInterface
 public interface Linq<T> {
-	public static final class AppendFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
-		private final T value;
-		private boolean appended;
-
-		public AppendFetch(FetchBase<T> fetch, T value) {
-			this.fetch = fetch;
-			this.value = value;
-			this.appended = false;
-		}
-
-		@Override
-		protected final Holder<T> internalNext() {
-			var holder = fetch.next();
-
-			if (holder.exists()) {
-				return holder;
-			}
-
-			if (!appended) {
-				appended = true;
-				return Holder.of(value);
-			}
-
-			return Holder.none();
-		}
-
-		@Override
-		protected final void internalClose() {
-			fetch.close();
-		}
-	}
-
 	public static final class ArrayFetch<T> extends Fetch<T> {
 		private final T[] array;
 		private int index;
@@ -108,24 +75,31 @@ public interface Linq<T> {
 	public static final class ChunkFetch<T> extends Fetch<List<T>> {
 		private final FetchBase<T> fetch;
 		private final int size;
+		private boolean terminated;
 
 		public ChunkFetch(FetchBase<T> fetch, int size) {
 			this.fetch = fetch;
 			this.size = size;
+			this.terminated = false;
 		}
 
 		@Override
 		protected final Holder<List<T>> internalNext() {
+			if (terminated) {
+				return Holder.none();
+			}
+
 			var list = new ArrayList<T>();
 
 			for (var i = 0; i < size; i++) {
-				var holder = fetch.next();
+				var current = fetch.next();
 
-				if (!holder.exists()) {
+				if (!current.exists()) {
+					terminated = true;
 					break;
 				}
 
-				list.add(holder.value());
+				list.add(current.value());
 			}
 
 			if (list.isEmpty()) {
@@ -154,18 +128,18 @@ public interface Linq<T> {
 
 		@Override
 		protected final Holder<T> internalNext() {
-			var holder = fetch.next();
+			var current = fetch.next();
 
-			if (holder.exists()) {
-				return holder;
-			} else {
-				if (fetch == left) {
-					fetch.close();
-					fetch = right;
-					return fetch.next();
-				}
-				return holder;
+			if (current.exists()) {
+				return current;
 			}
+
+			if (fetch == left) {
+				fetch = right;
+				return fetch.next();
+			}
+
+			return current;
 		}
 
 		@Override
@@ -487,8 +461,8 @@ public interface Linq<T> {
 			return new ConcatFetch<T>(this, right);
 		}
 
-		public final AppendFetch<T> append(final T value) {
-			return new AppendFetch<T>(this, value);
+		public final ConcatFetch<T> append(final T value) {
+			return new ConcatFetch<T>(this, Fetch.from(value));
 		}
 
 		public final DefaultIfEmptyFetch<T> defaultIfEmpty(final T defaultValue) {
@@ -535,8 +509,8 @@ public interface Linq<T> {
 			return new OrderFetch<T>(this, Comparator.comparing(keySelector, Comparator.reverseOrder()));
 		}
 
-		public final PrependFetch<T> prepend(T value) {
-			return new PrependFetch<T>(this, value);
+		public final ConcatFetch<T> prepend(T value) {
+			return new ConcatFetch<T>(Fetch.from(value), this);
 		}
 
 		public final ReverseFetch<T> reverse() {
@@ -598,17 +572,33 @@ public interface Linq<T> {
 		private Holder<T> peek;
 
 		public final Holder<T> peek() {
+			if (closed) {
+				throw new RuntimeException("already closed");
+			}
+
 			if (peek == null) {
 				peek = internalNext();
 			}
+
 			return peek;
 		}
 
 		public final Holder<T> next() {
+			if (closed) {
+				throw new RuntimeException("already closed");
+			}
+
 			if (peek == null) {
-				return internalNext();
+				var current = internalNext();
+				if (!current.exists()) {
+					close();
+				}
+				return current;
 			} else {
 				var current = peek;
+				if (!current.exists()) {
+					close();
+				}
 				peek = null;
 				return current;
 			}
@@ -628,7 +618,13 @@ public interface Linq<T> {
 
 		public final T aggregate(BiFunction<T, T, T> func) {
 			try (var _this = this) {
-				var result = next().value();
+				var first = next();
+
+				if (!first.exists()) {
+					throw new NoSuchElementException();
+				}
+
+				var result = first.value();
 
 				while (true) {
 					var current = next();
@@ -784,7 +780,13 @@ public interface Linq<T> {
 
 		public final T first() {
 			try (var _this = this) {
-				return next().value();
+				var first = next();
+
+				if (!first.exists()) {
+					throw new NoSuchElementException();
+				}
+
+				return first.value();
 			}
 		}
 
@@ -804,18 +806,18 @@ public interface Linq<T> {
 			try (var _this = this) {
 				var last = next();
 
-				if (last.exists()) {
-					while (true) {
-						var current = next();
+				if (!last.exists()) {
+					throw new NoSuchElementException();
+				}
 
-						if (!current.exists()) {
-							return last.value();
-						}
+				while (true) {
+					var current = next();
 
-						last = current;
+					if (!current.exists()) {
+						return last.value();
 					}
-				} else {
-					return last.value();
+
+					last = current;
 				}
 			}
 		}
@@ -844,6 +846,10 @@ public interface Linq<T> {
 			try (var _this = this) {
 				var max = next();
 
+				if (!max.exists()) {
+					throw new NoSuchElementException();
+				}
+
 				while (true) {
 					var current = next();
 
@@ -861,6 +867,11 @@ public interface Linq<T> {
 		public final <TKey extends Comparable<TKey>> T maxBy(Function<T, TKey> keyFactory) {
 			try (var _this = this) {
 				var max = next();
+
+				if (!max.exists()) {
+					throw new NoSuchElementException();
+				}
+
 				var maxKey = keyFactory.apply(max.value());
 
 				while (true) {
@@ -883,6 +894,11 @@ public interface Linq<T> {
 		public final <TKey> T maxBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
 			try (var _this = this) {
 				var max = next();
+
+				if (!max.exists()) {
+					throw new NoSuchElementException();
+				}
+
 				var maxKey = keyFactory.apply(max.value());
 
 				while (true) {
@@ -906,6 +922,10 @@ public interface Linq<T> {
 			try (var _this = this) {
 				var min = next();
 
+				if (!min.exists()) {
+					throw new NoSuchElementException();
+				}
+
 				while (true) {
 					var current = next();
 
@@ -923,6 +943,11 @@ public interface Linq<T> {
 		public final <TKey extends Comparable<TKey>> T minBy(Function<T, TKey> keyFactory) {
 			try (var _this = this) {
 				var min = next();
+
+				if (!min.exists()) {
+					throw new NoSuchElementException();
+				}
+
 				var minKey = keyFactory.apply(min.value());
 
 				while (true) {
@@ -945,6 +970,11 @@ public interface Linq<T> {
 		public final <TKey> T minBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
 			try (var _this = this) {
 				var min = next();
+
+				if (!min.exists()) {
+					throw new NoSuchElementException();
+				}
+
 				var minKey = keyFactory.apply(min.value());
 
 				while (true) {
@@ -1600,32 +1630,6 @@ public interface Linq<T> {
 		}
 	}
 
-	public static final class PrependFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
-		private final T value;
-		private boolean prepended;
-
-		public PrependFetch(FetchBase<T> fetch, T value) {
-			this.fetch = fetch;
-			this.value = value;
-			this.prepended = false;
-		}
-
-		@Override
-		protected final Holder<T> internalNext() {
-			if (!prepended) {
-				prepended = true;
-				return Holder.of(value);
-			}
-			return fetch.next();
-		}
-
-		@Override
-		protected final void internalClose() {
-			fetch.close();
-		}
-	}
-
 	public static final class RangeFetch extends Fetch<Integer> {
 		private final int start;
 		private final int count;
@@ -1762,7 +1766,6 @@ public interface Linq<T> {
 					return holder;
 				}
 
-				inner.close();
 				var innerHolder = fetch.next();
 
 				if (!innerHolder.exists()) {
@@ -1816,7 +1819,7 @@ public interface Linq<T> {
 	public static final class SkipLastFetch<T> extends Fetch<T> {
 		private final FetchBase<T> fetch;
 		private final int count;
-		private Queue<Holder<T>> queue;
+		private ArrayDeque<Holder<T>> queue;
 
 		public SkipLastFetch(FetchBase<T> fetch, int count) {
 			this.fetch = fetch;
@@ -1830,25 +1833,25 @@ public interface Linq<T> {
 				queue = new ArrayDeque<Holder<T>>(count);
 
 				for (var i = 0; i < count; i++) {
-					var holder = fetch.next();
+					var current = fetch.next();
 
-					if (!holder.exists()) {
-						break;
+					if (!current.exists()) {
+						return current;
 					}
 
-					queue.add(holder);
+					queue.addLast(current);
 				}
 			}
 
-			var holder = fetch.next();
+			var current = fetch.next();
 
-			if (holder.exists()) {
-				var value = queue.remove();
-				queue.add(holder);
-				return value;
+			if (current.exists()) {
+				var first = queue.removeFirst();
+				queue.addLast(current);
+				return first;
 			}
 
-			return holder;
+			return current;
 		}
 
 		@Override
