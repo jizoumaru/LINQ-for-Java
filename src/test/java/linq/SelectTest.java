@@ -19,7 +19,7 @@ public class SelectTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.select(x -> x).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

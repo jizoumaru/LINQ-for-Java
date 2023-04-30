@@ -21,7 +21,7 @@ public class ReverseTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.reverse().iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

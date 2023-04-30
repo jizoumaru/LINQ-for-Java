@@ -18,7 +18,7 @@ public class AnyPredicateTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.any(x -> true);
 		assertEquals(1, linq.getCloseCount());
 	}

@@ -31,7 +31,7 @@ public class GroupByTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.groupBy(x -> x).iterator().close();
 
 		assertEquals(1, linq.getCloseCount());

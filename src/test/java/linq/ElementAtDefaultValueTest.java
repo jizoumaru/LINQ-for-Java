@@ -16,7 +16,7 @@ public class ElementAtDefaultValueTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.elementAtOrDefault(0, 0);
 		assertEquals(1, linq.getCloseCount());
 	}

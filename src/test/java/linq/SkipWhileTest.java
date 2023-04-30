@@ -21,10 +21,10 @@ public class SkipWhileTest {
 				.skipWhile(x -> x.charAt(0) == 'A')
 				.iterator().hasNext());
 	}
-	
+
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.skipWhile(x -> false).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

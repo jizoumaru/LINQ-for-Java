@@ -25,11 +25,11 @@ public class SequenceEqualTest {
 
 	@Test
 	public void testClose() {
-		var left = new CloseCountLinq();
-		var right = new CloseCountLinq();
-		
+		var left = CloseCountLinq.create();
+		var right = CloseCountLinq.create();
+
 		left.sequenceEqual(right);
-		
+
 		assertEquals(1, left.getCloseCount());
 		assertEquals(1, right.getCloseCount());
 	}

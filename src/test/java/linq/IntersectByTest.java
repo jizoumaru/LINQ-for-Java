@@ -21,8 +21,8 @@ public class IntersectByTest {
 
 	@Test
 	public void testClose() {
-		var left = new CloseCountLinq();
-		var right = new CloseCountLinq();
+		var left = CloseCountLinq.create();
+		var right = CloseCountLinq.create();
 
 		left.intersectBy(right, x -> x).iterator().close();
 

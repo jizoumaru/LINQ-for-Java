@@ -36,7 +36,7 @@ public class TakeWhileTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.takeWhile(x -> false).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

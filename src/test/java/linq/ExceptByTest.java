@@ -18,12 +18,11 @@ public class ExceptByTest {
 		assertEquals("3c", i.next());
 		assertFalse(i.hasNext());
 	}
-	
 
 	@Test
 	public void testClose() {
-		var left = new CloseCountLinq();
-		var right = new CloseCountLinq();
+		var left = CloseCountLinq.create();
+		var right = CloseCountLinq.create();
 
 		left.exceptBy(right, x -> x).iterator().close();
 

@@ -17,7 +17,7 @@ public class FirstTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.first();
 		assertEquals(1, linq.getCloseCount());
 	}

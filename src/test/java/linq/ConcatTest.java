@@ -21,11 +21,11 @@ public class ConcatTest {
 
 	@Test
 	public void testClose() {
-		var left = new CloseCountLinq();
-		var right = new CloseCountLinq();
-		
+		var left = CloseCountLinq.create();
+		var right = CloseCountLinq.create();
+
 		left.concat(right).iterator().close();
-		
+
 		assertEquals(1, left.getCloseCount());
 		assertEquals(1, right.getCloseCount());
 	}

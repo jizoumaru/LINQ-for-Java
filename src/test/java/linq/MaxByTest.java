@@ -38,14 +38,14 @@ public class MaxByTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.maxBy(x -> x);
 		assertEquals(1, linq.getCloseCount());
 	}
 
 	@Test
 	public void testCloseComparator() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.maxBy(x -> x, Integer::compare);
 		assertEquals(1, linq.getCloseCount());
 	}

@@ -31,10 +31,10 @@ public class CastTest {
 		}
 		assertTrue(ex != null);
 	}
-	
+
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.cast().iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

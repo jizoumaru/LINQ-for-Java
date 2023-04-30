@@ -28,9 +28,9 @@ public class GroupJoinTest {
 
 	@Test
 	public void testClose() {
-		var left = new CloseCountLinq();
-		var right = new CloseCountLinq();
-		
+		var left = CloseCountLinq.create();
+		var right = CloseCountLinq.create();
+
 		left.groupJoin(right, x -> x, x -> x, (x, y) -> 0).iterator().close();
 
 		assertEquals(1, left.getCloseCount());

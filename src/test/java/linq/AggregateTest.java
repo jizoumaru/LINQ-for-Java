@@ -1,8 +1,8 @@
 package linq;
 
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import java.util.NoSuchElementException;
 
@@ -32,10 +32,10 @@ public class AggregateTest {
 		var s = Linq.<Integer>from().aggregate(4, (l, r) -> l + r);
 		assertTrue(4 == s);
 	}
-	
+
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.aggregate((l, r) -> l);
 		assertEquals(1, linq.getCloseCount());
 	}

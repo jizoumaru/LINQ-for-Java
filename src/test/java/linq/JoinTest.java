@@ -23,8 +23,8 @@ public class JoinTest {
 
 	@Test
 	public void testClose() {
-		var left = new CloseCountLinq();
-		var right = new CloseCountLinq();
+		var left = CloseCountLinq.create();
+		var right = CloseCountLinq.create();
 
 		left.join(right, x -> x, x -> x, (x, y) -> 0).iterator().close();
 

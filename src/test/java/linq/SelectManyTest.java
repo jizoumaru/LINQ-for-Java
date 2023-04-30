@@ -28,9 +28,9 @@ public class SelectManyTest {
 
 	@Test
 	public void testClose() {
-		var base = new CloseCountLinq();
-		var sub1 = new CloseCountLinq();
-		
+		var base = CloseCountLinq.create();
+		var sub1 = CloseCountLinq.create();
+
 		var iter = base.selectMany(x -> sub1).iterator();
 		iter.next();
 		iter.close();

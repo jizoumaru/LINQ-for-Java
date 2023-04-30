@@ -15,10 +15,10 @@ public class LastTest {
 		assertEquals("a", Linq.from("a").last());
 		assertEquals("c", Linq.from("a", "b", "c").last());
 	}
-	
+
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.last();
 		assertEquals(1, linq.getCloseCount());
 	}

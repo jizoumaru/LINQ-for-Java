@@ -32,7 +32,7 @@ public class ToDictionaryTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.toDictionary(x -> x);
 		assertEquals(1, linq.getCloseCount());
 	}

@@ -20,8 +20,8 @@ public class ExceptTest {
 
 	@Test
 	public void testClose() {
-		var left = new CloseCountLinq();
-		var right = new CloseCountLinq();
+		var left = CloseCountLinq.create();
+		var right = CloseCountLinq.create();
 
 		left.except(right).iterator().close();
 

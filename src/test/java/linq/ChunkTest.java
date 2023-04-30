@@ -8,6 +8,11 @@ import java.util.Arrays;
 import org.junit.Test;
 
 public class ChunkTest {
+	@Test
+	public void testEmpty() {
+		var i = Linq.empty().chunk(1).iterator();
+		assertFalse(i.hasNext());
+	}
 
 	@Test
 	public void testChunk() {
@@ -21,7 +26,7 @@ public class ChunkTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.chunk(1).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

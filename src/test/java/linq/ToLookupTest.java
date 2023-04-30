@@ -23,7 +23,7 @@ public class ToLookupTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.toLookup(x -> x);
 		assertEquals(1, linq.getCloseCount());
 	}

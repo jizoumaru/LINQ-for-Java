@@ -37,14 +37,14 @@ public class MinByTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.minBy(x -> x);
 		assertEquals(1, linq.getCloseCount());
 	}
 
 	@Test
 	public void testCloseComparator() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.minBy(x -> x, Integer::compare);
 		assertEquals(1, linq.getCloseCount());
 	}

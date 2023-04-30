@@ -19,7 +19,7 @@ public class MaxTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.max(Integer::compare);
 		assertEquals(1, linq.getCloseCount());
 	}

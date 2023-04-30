@@ -35,7 +35,7 @@ public class TakeTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.take(1).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

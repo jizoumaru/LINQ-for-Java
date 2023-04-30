@@ -17,7 +17,7 @@ public class FromStreamTest {
 		assertEquals("c", i.next());
 		assertFalse(i.hasNext());
 	}
-	
+
 	@Test
 	public void testClose() {
 		var count = new AtomicInteger(0);

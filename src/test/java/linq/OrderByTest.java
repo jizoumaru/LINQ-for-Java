@@ -21,7 +21,7 @@ public class OrderByTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.orderBy(x -> x).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

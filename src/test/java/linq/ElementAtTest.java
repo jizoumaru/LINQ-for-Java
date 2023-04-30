@@ -17,7 +17,7 @@ public class ElementAtTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.elementAt(0);
 		assertEquals(1, linq.getCloseCount());
 	}

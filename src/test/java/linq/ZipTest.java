@@ -40,8 +40,8 @@ public class ZipTest {
 
 	@Test
 	public void testClose() {
-		var left = new CloseCountLinq();
-		var right = new CloseCountLinq();
+		var left = CloseCountLinq.create();
+		var right = CloseCountLinq.create();
 
 		left.zip(right).iterator().close();
 

@@ -1,14 +1,20 @@
 package linq;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
-public class CloseCountLinq implements Linq<Integer> {
-	private final AtomicInteger closeCount = new AtomicInteger(0);
-
-	@Override
-	public Fetch<Integer> fetch() {
-		return new CloseCountFetch(closeCount);
+public class CloseCountLinq extends Linq<Integer> {
+	public CloseCountLinq(Supplier<? extends Fetch<Integer>> supplier, AtomicInteger closeCount) {
+		super(supplier);
+		this.closeCount = closeCount;
 	}
+
+	public static CloseCountLinq create() {
+		var closeCount = new AtomicInteger();
+		return new CloseCountLinq(() -> new CloseCountFetch(closeCount), closeCount);
+	}
+
+	private final AtomicInteger closeCount;
 
 	public int getCloseCount() {
 		return closeCount.get();

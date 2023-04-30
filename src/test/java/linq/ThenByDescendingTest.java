@@ -21,10 +21,10 @@ public class ThenByDescendingTest {
 		assertEquals("Cc", i.next());
 		assertFalse(i.hasNext());
 	}
-	
+
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.orderBy(x -> x).thenByDescending(x -> x).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

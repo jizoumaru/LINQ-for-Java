@@ -33,10 +33,10 @@ public class SkipLastTest {
 			assertFalse(i.hasNext());
 		}
 	}
-	
+
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.skipLast(1).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}

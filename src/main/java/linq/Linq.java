@@ -20,10 +20,10 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
-@FunctionalInterface
-public interface Linq<T> {
+public class Linq<T> {
 	public static final class ArrayFetch<T> extends Fetch<T> {
 		private final T[] array;
 		private int index;
@@ -47,9 +47,9 @@ public interface Linq<T> {
 	}
 
 	public static final class CastFetch<T, U> extends Fetch<U> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 
-		public CastFetch(FetchBase<T> fetch) {
+		public CastFetch(Fetch<T> fetch) {
 			this.fetch = fetch;
 		}
 
@@ -73,11 +73,11 @@ public interface Linq<T> {
 	}
 
 	public static final class ChunkFetch<T> extends Fetch<List<T>> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final int size;
 		private boolean terminated;
 
-		public ChunkFetch(FetchBase<T> fetch, int size) {
+		public ChunkFetch(Fetch<T> fetch, int size) {
 			this.fetch = fetch;
 			this.size = size;
 			this.terminated = false;
@@ -116,11 +116,11 @@ public interface Linq<T> {
 	}
 
 	public static final class ConcatFetch<T> extends Fetch<T> {
-		private final FetchBase<T> left;
-		private final FetchBase<T> right;
-		private FetchBase<T> fetch;
+		private final Fetch<T> left;
+		private final Fetch<T> right;
+		private Fetch<T> fetch;
 
-		public ConcatFetch(FetchBase<T> left, FetchBase<T> right) {
+		public ConcatFetch(Fetch<T> left, Fetch<T> right) {
 			this.left = left;
 			this.right = right;
 			this.fetch = left;
@@ -152,7 +152,7 @@ public interface Linq<T> {
 	}
 
 	public static final class DefaultIfEmptyFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final T defaultValue;
 		private State state;
 
@@ -160,7 +160,7 @@ public interface Linq<T> {
 			DEFAULT, EMPTY, FETCH
 		}
 
-		public DefaultIfEmptyFetch(FetchBase<T> fetch, T defaultValue) {
+		public DefaultIfEmptyFetch(Fetch<T> fetch, T defaultValue) {
 			this.fetch = fetch;
 			this.defaultValue = defaultValue;
 			this.state = State.DEFAULT;
@@ -194,11 +194,11 @@ public interface Linq<T> {
 	}
 
 	public static final class DistinctByFetch<T, K> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final Function<T, K> keyFactory;
 		private Iterator<Holder<T>> iterator;
 
-		public DistinctByFetch(FetchBase<T> fetch, Function<T, K> keyFactory) {
+		public DistinctByFetch(Fetch<T> fetch, Function<T, K> keyFactory) {
 			this.fetch = fetch;
 			this.keyFactory = keyFactory;
 			this.iterator = null;
@@ -237,10 +237,10 @@ public interface Linq<T> {
 	}
 
 	public static final class DistinctFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private Iterator<Holder<T>> iterator;
 
-		public DistinctFetch(FetchBase<T> fetch) {
+		public DistinctFetch(Fetch<T> fetch) {
 			this.fetch = fetch;
 			this.iterator = null;
 		}
@@ -290,12 +290,12 @@ public interface Linq<T> {
 	}
 
 	public static final class ExceptByFetch<T, K> extends Fetch<T> {
-		private final FetchBase<T> left;
-		private final FetchBase<T> right;
+		private final Fetch<T> left;
+		private final Fetch<T> right;
 		private final Function<T, K> keyFactory;
 		private Map<K, Holder<T>> map;
 
-		public ExceptByFetch(FetchBase<T> left, FetchBase<T> right, Function<T, K> keyFactory) {
+		public ExceptByFetch(Fetch<T> left, Fetch<T> right, Function<T, K> keyFactory) {
 			this.left = left;
 			this.right = right;
 			this.keyFactory = keyFactory;
@@ -343,11 +343,11 @@ public interface Linq<T> {
 	}
 
 	public static final class ExceptFetch<T> extends Fetch<T> {
-		private final FetchBase<T> left;
-		private final FetchBase<T> right;
+		private final Fetch<T> left;
+		private final Fetch<T> right;
 		private Set<Holder<T>> set;
 
-		public ExceptFetch(FetchBase<T> left, FetchBase<T> right) {
+		public ExceptFetch(Fetch<T> left, Fetch<T> right) {
 			this.left = left;
 			this.right = right;
 			this.set = null;
@@ -390,190 +390,13 @@ public interface Linq<T> {
 		}
 	}
 
-	public static abstract class Fetch<T> extends FetchBase<T> {
-
-		public static final <T> EmptyFetch<T> empty() {
-			return new EmptyFetch<T>();
-		}
-
-		public static final <T> IterableFetch<T> from(final Iterable<T> iterable) {
-			return new IterableFetch<T>(iterable);
-		}
-
-		public static final <T> StreamFetch<T> from(final Stream<T> stream) {
-			return new StreamFetch<T>(stream);
-		}
-
-		@SafeVarargs
-		public static final <T> ArrayFetch<T> from(final T... xs) {
-			return new ArrayFetch<T>(xs);
-		}
-
-		public static final RangeFetch range(final int start, final int count) {
-			return new RangeFetch(start, count);
-		}
-
-		public static final <T> RepeatFetch<T> repeat(final T value, final int count) {
-			return new RepeatFetch<T>(value, count);
-		}
-
-		public final FetchIterator<T> iterator() {
-			return new FetchIterator<T>(this);
-		}
-
-		public final <TRight, TKey, TResult> GroupJoinFetch<T, TRight, TKey, TResult> groupJoin(
-				FetchBase<TRight> right,
-				Function<T, TKey> leftKeyFactory,
-				Function<TRight, TKey> rightKeyFactory,
-				BiFunction<T, Fetch<TRight>, TResult> resultFactory) {
-
-			return new GroupJoinFetch<T, TRight, TKey, TResult>(
-					this,
-					right,
-					leftKeyFactory,
-					rightKeyFactory,
-					resultFactory);
-		}
-
-		public final <TRight, TKey, TResult> JoinFetch<T, TRight, TKey, TResult> join(
-				FetchBase<TRight> right,
-				Function<T, TKey> leftKeyFactory,
-				Function<TRight, TKey> rightKeyFactory,
-				BiFunction<T, Fetch<TRight>, TResult> resultFactory) {
-
-			return new JoinFetch<T, TRight, TKey, TResult>(
-					this,
-					right,
-					leftKeyFactory,
-					rightKeyFactory,
-					resultFactory);
-		}
-
-		public final <U> CastFetch<T, U> cast() {
-			return new CastFetch<T, U>(this);
-		}
-
-		public final ChunkFetch<T> chunk(final int size) {
-			return new ChunkFetch<T>(this, size);
-		}
-
-		public final ConcatFetch<T> concat(final Fetch<T> right) {
-			return new ConcatFetch<T>(this, right);
-		}
-
-		public final ConcatFetch<T> append(final T value) {
-			return new ConcatFetch<T>(this, Fetch.from(value));
-		}
-
-		public final DefaultIfEmptyFetch<T> defaultIfEmpty(final T defaultValue) {
-			return new DefaultIfEmptyFetch<T>(this, defaultValue);
-		}
-
-		public final DistinctFetch<T> distinct() {
-			return new DistinctFetch<T>(this);
-		}
-
-		public final <K> DistinctByFetch<T, K> distinctBy(final Function<T, K> keyFactory) {
-			return new DistinctByFetch<T, K>(this, keyFactory);
-		}
-
-		public final ExceptFetch<T> except(final Fetch<T> right) {
-			return new ExceptFetch<T>(this, right);
-		}
-
-		public final <K> ExceptByFetch<T, K> exceptBy(final Fetch<T> right, final Function<T, K> keyFactory) {
-			return new ExceptByFetch<T, K>(this, right, keyFactory);
-		}
-
-		public final <K> GroupByFetch<T, K> groupBy(final Function<T, K> keySelector) {
-			return new GroupByFetch<T, K>(this, keySelector);
-		}
-
-		public final IntersectFetch<T> intersect(final Fetch<T> right) {
-			return new IntersectFetch<T>(this, right);
-		}
-
-		public final <TKey> IntersectByFetch<T, TKey> intersectBy(final Fetch<TKey> right, final Function<T, TKey> keyFactory) {
-			return new IntersectByFetch<T, TKey>(this, right, keyFactory);
-		}
-
-		public final <U> TypeFetch<T, U> ofType(final Class<U> type) {
-			return new TypeFetch<T, U>(this, type);
-		}
-
-		public final <U extends Comparable<U>> OrderFetch<T> orderBy(final Function<T, U> keySelector) {
-			return new OrderFetch<T>(this, Comparator.comparing(keySelector));
-		}
-
-		public final <U extends Comparable<U>> OrderFetch<T> orderByDescending(final Function<T, U> keySelector) {
-			return new OrderFetch<T>(this, Comparator.comparing(keySelector, Comparator.reverseOrder()));
-		}
-
-		public final ConcatFetch<T> prepend(T value) {
-			return new ConcatFetch<T>(Fetch.from(value), this);
-		}
-
-		public final ReverseFetch<T> reverse() {
-			return new ReverseFetch<T>(this);
-		}
-
-		public final <U> SelectFetch<T, U> select(final Function<T, U> mapper) {
-			return new SelectFetch<T, U>(this, mapper);
-		}
-
-		public final <U> SelectManyFetch<T, U> selectMany(final Function<T, FetchBase<U>> mapper) {
-			return new SelectManyFetch<T, U>(this, mapper);
-		}
-
-		public final TakeFetch<T> take(int count) {
-			return new TakeFetch<T>(this, count);
-		}
-
-		public final TakeLastFetch<T> takeLast(final int size) {
-			return new TakeLastFetch<T>(this, size);
-		}
-
-		public final TakeWhileFetch<T> takeWhile(Predicate<T> predicate) {
-			return new TakeWhileFetch<T>(this, predicate);
-		}
-
-		public final UnionFetch<T> union(final Linq<T> right) {
-			return new UnionFetch<T>(this, right.fetch());
-		}
-
-		public final <TKey> UnionByFetch<T, TKey> unionBy(final Linq<T> right, final Function<T, TKey> keyFactory) {
-			return new UnionByFetch<T, TKey>(this, right.fetch(), keyFactory);
-		}
-
-		public final WhereFetch<T> where(final Predicate<T> predicatge) {
-			return new WhereFetch<T>(this, predicatge);
-		}
-
-		public final <TRight> ZipFetch<T, TRight> zip(final Linq<TRight> right) {
-			return new ZipFetch<T, TRight>(this, right.fetch());
-		}
-
-		public final SkipFetch<T> skip(final long count) {
-			return new SkipFetch<T>(this, count);
-		}
-
-		public final SkipLastFetch<T> skipLast(final int size) {
-			return new SkipLastFetch<T>(this, size);
-		}
-
-		public final SkipWhileFetch<T> skipWhile(Predicate<T> predicate) {
-			return new SkipWhileFetch<T>(this, predicate);
-		}
-
-	}
-
-	public static abstract class FetchBase<T> implements AutoCloseable {
+	public static abstract class Fetch<T> implements AutoCloseable {
 		private boolean closed;
 		private Holder<T> peek;
 
 		public final Holder<T> peek() {
 			if (closed) {
-				throw new RuntimeException("already closed");
+				throw new IllegalStateException("already closed");
 			}
 
 			if (peek == null) {
@@ -585,7 +408,7 @@ public interface Linq<T> {
 
 		public final Holder<T> next() {
 			if (closed) {
-				throw new RuntimeException("already closed");
+				throw new IllegalStateException("already closed");
 			}
 
 			if (peek == null) {
@@ -616,565 +439,12 @@ public interface Linq<T> {
 
 		protected abstract void internalClose();
 
-		public final T aggregate(BiFunction<T, T, T> func) {
-			try (var _this = this) {
-				var first = next();
-
-				if (!first.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				var result = first.value();
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return result;
-					}
-
-					result = func.apply(result, current.value());
-				}
-			}
-		}
-
-		public final T aggregate(T seed, BiFunction<T, T, T> func) {
-			try (var _this = this) {
-				var result = seed;
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return result;
-					}
-
-					result = func.apply(result, current.value());
-				}
-			}
-		}
-
-		public final boolean all(Predicate<T> predicate) {
-			try (var _this = this) {
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return true;
-					}
-
-					if (!predicate.test(current.value())) {
-						return false;
-					}
-				}
-			}
-		}
-
-		public final boolean any() {
-			try (var _this = this) {
-				return next().exists();
-			}
-		}
-
-		public final boolean any(Predicate<T> predicate) {
-			try (var _this = this) {
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return false;
-					}
-
-					if (predicate.test(current.value())) {
-						return true;
-					}
-				}
-			}
-		}
-
-		public final Long average(Function<T, Long> func) {
-			try (var _this = this) {
-				var sum = 0L;
-				var count = 0L;
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return sum / count;
-					}
-
-					sum += func.apply(current.value());
-					count++;
-				}
-			}
-		}
-
-		public final boolean contains(T target) {
-			try (var _this = this) {
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return false;
-					}
-
-					if (Objects.equals(target, current.value())) {
-						return true;
-					}
-				}
-			}
-		}
-
-		public final long count() {
-			try (var _this = this) {
-				var count = 0L;
-
-				while (next().exists()) {
-					count++;
-				}
-
-				return count;
-			}
-		}
-
-		public final T elementAt(long index) {
-			try (var _this = this) {
-				var count = 0L;
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						throw new IndexOutOfBoundsException();
-					}
-
-					if (count == index) {
-						return current.value();
-					}
-
-					count++;
-				}
-			}
-		}
-
-		public final T elementAtOrDefault(long index, T defaultValue) {
-			try (var _this = this) {
-				var count = 0L;
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return defaultValue;
-					}
-
-					if (count == index) {
-						return current.value();
-					}
-
-					count++;
-				}
-			}
-		}
-
-		public final T first() {
-			try (var _this = this) {
-				var first = next();
-
-				if (!first.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				return first.value();
-			}
-		}
-
-		public final T firstOrDefault(T defaultValue) {
-			try (var _this = this) {
-				var first = next();
-
-				if (first.exists()) {
-					return first.value();
-				} else {
-					return defaultValue;
-				}
-			}
-		}
-
-		public final T last() {
-			try (var _this = this) {
-				var last = next();
-
-				if (!last.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return last.value();
-					}
-
-					last = current;
-				}
-			}
-		}
-
-		public final T lastOrDefault(T defaultValue) {
-			try (var _this = this) {
-				var last = next();
-
-				if (last.exists()) {
-					while (true) {
-						var current = next();
-
-						if (!current.exists()) {
-							return last.value();
-						}
-
-						last = current;
-					}
-				} else {
-					return defaultValue;
-				}
-			}
-		}
-
-		public final T max(Comparator<T> comparator) {
-			try (var _this = this) {
-				var max = next();
-
-				if (!max.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return max.value();
-					}
-
-					if (comparator.compare(max.value(), current.value()) < 0) {
-						max = current;
-					}
-				}
-			}
-		}
-
-		public final <TKey extends Comparable<TKey>> T maxBy(Function<T, TKey> keyFactory) {
-			try (var _this = this) {
-				var max = next();
-
-				if (!max.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				var maxKey = keyFactory.apply(max.value());
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return max.value();
-					}
-
-					var currentKey = keyFactory.apply(current.value());
-
-					if (maxKey.compareTo(currentKey) < 0) {
-						max = current;
-						maxKey = currentKey;
-					}
-				}
-			}
-		}
-
-		public final <TKey> T maxBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
-			try (var _this = this) {
-				var max = next();
-
-				if (!max.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				var maxKey = keyFactory.apply(max.value());
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return max.value();
-					}
-
-					var currentKey = keyFactory.apply(current.value());
-
-					if (keyComparator.compare(maxKey, currentKey) < 0) {
-						max = current;
-						maxKey = currentKey;
-					}
-				}
-			}
-		}
-
-		public final T min(Comparator<T> comparator) {
-			try (var _this = this) {
-				var min = next();
-
-				if (!min.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return min.value();
-					}
-
-					if (comparator.compare(min.value(), current.value()) > 0) {
-						min = current;
-					}
-				}
-			}
-		}
-
-		public final <TKey extends Comparable<TKey>> T minBy(Function<T, TKey> keyFactory) {
-			try (var _this = this) {
-				var min = next();
-
-				if (!min.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				var minKey = keyFactory.apply(min.value());
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return min.value();
-					}
-
-					var currentKey = keyFactory.apply(current.value());
-
-					if (minKey.compareTo(currentKey) > 0) {
-						min = current;
-						minKey = currentKey;
-					}
-				}
-			}
-		}
-
-		public final <TKey> T minBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
-			try (var _this = this) {
-				var min = next();
-
-				if (!min.exists()) {
-					throw new NoSuchElementException();
-				}
-
-				var minKey = keyFactory.apply(min.value());
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return min.value();
-					}
-
-					var currentKey = keyFactory.apply(current.value());
-
-					if (keyComparator.compare(minKey, currentKey) > 0) {
-						min = current;
-						minKey = currentKey;
-					}
-				}
-			}
-		}
-
-		public final boolean sequenceEqual(Fetch<T> right) {
-			try (var _right = right;
-					var _left = this) {
-
-				while (true) {
-					var l = _left.next();
-					var r = _right.next();
-
-					if (!l.exists() && !r.exists()) {
-						return true;
-					}
-
-					if (!Objects.equals(l, r)) {
-						return false;
-					}
-				}
-			}
-		}
-
-		public final T single() {
-			try (var _this = this) {
-				var current = next();
-
-				if (!current.exists()) {
-					throw new IllegalStateException("値が存在しません");
-				}
-
-				if (next().exists()) {
-					throw new IllegalStateException("値が複数存在します");
-				}
-
-				return current.value();
-			}
-		}
-
-		public final T singleOrDefault(T defaultValue) {
-			try (var _this = this) {
-				var current = next();
-
-				if (!current.exists()) {
-					return defaultValue;
-				}
-
-				if (next().exists()) {
-					throw new IllegalStateException("値が複数存在します");
-				}
-
-				return current.value();
-			}
-		}
-
-		public final long sum(Function<T, Long> func) {
-			try (var _this = this) {
-				var result = 0L;
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return result;
-					}
-
-					result += func.apply(current.value());
-				}
-			}
-		}
-
-		public final void forEach(Consumer<? super T> consumer) {
-			try (var _this = this) {
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return;
-					}
-
-					consumer.accept(current.value());
-				}
-			}
-		}
-
-		public final T[] toArray(T[] array) {
-			try (var _this = this) {
-				var list = new ArrayList<T>();
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return list.toArray(array);
-					}
-
-					list.add(current.value());
-				}
-			}
-		}
-
-		public final <K> LinkedHashMap<K, T> toDictionary(Function<T, K> keyFactory) {
-			try (var _this = this) {
-				var map = new LinkedHashMap<K, T>();
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return map;
-					}
-
-					var key = keyFactory.apply(current.value());
-
-					if (map.containsKey(key)) {
-						throw new IllegalArgumentException("キーが重複しています: " + key);
-					}
-
-					map.put(key, current.value());
-				}
-			}
-		}
-
-		public final LinkedHashSet<T> toHashSet() {
-			try (var _this = this) {
-				var set = new LinkedHashSet<T>();
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return set;
-					}
-
-					set.add(current.value());
-				}
-			}
-		}
-
-		public final ArrayList<T> toList() {
-			try (var _this = this) {
-				var list = new ArrayList<T>();
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return list;
-					}
-
-					list.add(current.value());
-				}
-			}
-		}
-
-		public final <K> LinkedHashMap<K, List<T>> toLookup(Function<T, K> keyFactory) {
-			try (var _this = this) {
-				var map = new LinkedHashMap<K, List<T>>();
-
-				while (true) {
-					var current = next();
-
-					if (!current.exists()) {
-						return map;
-					}
-
-					var key = keyFactory.apply(current.value());
-					var list = map.get(key);
-
-					if (list == null) {
-						list = new ArrayList<T>();
-						map.put(key, list);
-					}
-
-					list.add(current.value());
-				}
-			}
-		}
-
 	}
 
 	public static final class FetchIterator<T> implements Iterator<T>, AutoCloseable {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 
-		public FetchIterator(FetchBase<T> fetch) {
+		public FetchIterator(Fetch<T> fetch) {
 			this.fetch = fetch;
 		}
 
@@ -1195,11 +465,11 @@ public interface Linq<T> {
 	}
 
 	public static final class GroupByFetch<T, K> extends Fetch<Entry<K, List<T>>> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final Function<T, K> keyFactory;
 		private Iterator<Entry<K, List<T>>> entries;
 
-		public GroupByFetch(FetchBase<T> fetch, Function<T, K> keyFactory) {
+		public GroupByFetch(Fetch<T> fetch, Function<T, K> keyFactory) {
 			this.fetch = fetch;
 			this.keyFactory = keyFactory;
 			this.entries = null;
@@ -1245,19 +515,19 @@ public interface Linq<T> {
 	}
 
 	public static final class GroupJoinFetch<TLeft, TRight, TKey, TResult> extends Fetch<TResult> {
-		private final FetchBase<TLeft> left;
-		private final FetchBase<TRight> right;
+		private final Fetch<TLeft> left;
+		private final Fetch<TRight> right;
 		private final Function<TLeft, TKey> leftKeyFactory;
 		private final Function<TRight, TKey> rightKeyFactory;
-		private final BiFunction<TLeft, Fetch<TRight>, TResult> resultFactory;
+		private final BiFunction<TLeft, Linq<TRight>, TResult> resultFactory;
 		private Map<TKey, List<TRight>> map;
 
 		public GroupJoinFetch(
-				FetchBase<TLeft> left,
-				FetchBase<TRight> right,
+				Fetch<TLeft> left,
+				Fetch<TRight> right,
 				Function<TLeft, TKey> leftKeyFactory,
 				Function<TRight, TKey> rightKeyFactory,
-				BiFunction<TLeft, Fetch<TRight>, TResult> resultFactory) {
+				BiFunction<TLeft, Linq<TRight>, TResult> resultFactory) {
 			this.left = left;
 			this.right = right;
 			this.leftKeyFactory = leftKeyFactory;
@@ -1300,7 +570,7 @@ public interface Linq<T> {
 					values = new ArrayList<TRight>();
 				}
 
-				return Holder.of(resultFactory.apply(holder.value(), Fetch.from(values)));
+				return Holder.of(resultFactory.apply(holder.value(), Linq.from(values)));
 			}
 
 			return Holder.none();
@@ -1363,14 +633,14 @@ public interface Linq<T> {
 	}
 
 	public static final class IntersectByFetch<TLeft, TKey> extends Fetch<TLeft> {
-		private final FetchBase<TLeft> left;
-		private final FetchBase<TKey> right;
+		private final Fetch<TLeft> left;
+		private final Fetch<TKey> right;
 		private final Function<TLeft, TKey> keyFactory;
 		private Set<TKey> set;
 
 		public IntersectByFetch(
-				FetchBase<TLeft> left,
-				FetchBase<TKey> right,
+				Fetch<TLeft> left,
+				Fetch<TKey> right,
 				Function<TLeft, TKey> keyFactory) {
 			this.left = left;
 			this.right = right;
@@ -1418,11 +688,11 @@ public interface Linq<T> {
 	}
 
 	public static final class IntersectFetch<T> extends Fetch<T> {
-		private final FetchBase<T> left;
-		private final FetchBase<T> right;
+		private final Fetch<T> left;
+		private final Fetch<T> right;
 		private Set<Holder<T>> set;
 
-		public IntersectFetch(FetchBase<T> left, FetchBase<T> right) {
+		public IntersectFetch(Fetch<T> left, Fetch<T> right) {
 			this.left = left;
 			this.right = right;
 			this.set = null;
@@ -1521,19 +791,19 @@ public interface Linq<T> {
 	}
 
 	public static final class JoinFetch<TLeft, TRight, TKey, TResult> extends Fetch<TResult> {
-		private final FetchBase<TLeft> left;
-		private final FetchBase<TRight> right;
+		private final Fetch<TLeft> left;
+		private final Fetch<TRight> right;
 		private final Function<TLeft, TKey> leftKeyFactory;
 		private final Function<TRight, TKey> rightKeyFactory;
-		private final BiFunction<TLeft, Fetch<TRight>, TResult> resultFactory;
+		private final BiFunction<TLeft, Linq<TRight>, TResult> resultFactory;
 		private Map<TKey, List<TRight>> map;
 
 		public JoinFetch(
-				FetchBase<TLeft> left,
-				FetchBase<TRight> right,
+				Fetch<TLeft> left,
+				Fetch<TRight> right,
 				Function<TLeft, TKey> leftKeyFactory,
 				Function<TRight, TKey> rightKeyFactory,
-				BiFunction<TLeft, Fetch<TRight>, TResult> resultFactory) {
+				BiFunction<TLeft, Linq<TRight>, TResult> resultFactory) {
 			this.left = left;
 			this.right = right;
 			this.leftKeyFactory = leftKeyFactory;
@@ -1577,7 +847,7 @@ public interface Linq<T> {
 				var values = map.get(key);
 
 				if (values != null) {
-					return Holder.of(resultFactory.apply(holder.value(), Fetch.from(values)));
+					return Holder.of(resultFactory.apply(holder.value(), Linq.from(values)));
 				}
 			}
 		}
@@ -1591,11 +861,11 @@ public interface Linq<T> {
 	}
 
 	public static final class OrderFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final Comparator<T> comparator;
 		private Iterator<T> iterator;
 
-		public OrderFetch(FetchBase<T> fetch, Comparator<T> comparator) {
+		public OrderFetch(Fetch<T> fetch, Comparator<T> comparator) {
 			this.fetch = fetch;
 			this.comparator = comparator;
 			this.iterator = null;
@@ -1604,7 +874,18 @@ public interface Linq<T> {
 		@Override
 		protected final Holder<T> internalNext() {
 			if (iterator == null) {
-				var list = fetch.toList();
+				var list = new ArrayList<T>();
+				
+				while (true) {
+					var current = fetch.next();
+					
+					if (!current.exists()) {
+						break;
+					}
+					
+					list.add(current.value());
+				}
+				
 				Collections.sort(list, comparator);
 				iterator = list.iterator();
 			}
@@ -1680,10 +961,10 @@ public interface Linq<T> {
 	}
 
 	public static final class ReverseFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private Iterator<Holder<T>> iterator;
 
-		public ReverseFetch(FetchBase<T> fetch) {
+		public ReverseFetch(Fetch<T> fetch) {
 			this.fetch = fetch;
 			this.iterator = null;
 		}
@@ -1721,10 +1002,10 @@ public interface Linq<T> {
 	}
 
 	public static final class SelectFetch<T, U> extends Fetch<U> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final Function<T, U> function;
 
-		public SelectFetch(FetchBase<T> iterator, Function<T, U> function) {
+		public SelectFetch(Fetch<T> iterator, Function<T, U> function) {
 			this.fetch = iterator;
 			this.function = function;
 		}
@@ -1747,11 +1028,11 @@ public interface Linq<T> {
 	}
 
 	public static final class SelectManyFetch<T, U> extends Fetch<U> {
-		private final FetchBase<T> fetch;
-		private final Function<T, FetchBase<U>> function;
-		private FetchBase<U> inner;
+		private final Fetch<T> fetch;
+		private final Function<T, Fetch<U>> function;
+		private Fetch<U> inner;
 
-		public SelectManyFetch(FetchBase<T> fetch, Function<T, FetchBase<U>> function) {
+		public SelectManyFetch(Fetch<T> fetch, Function<T, Fetch<U>> function) {
 			this.fetch = fetch;
 			this.function = function;
 			this.inner = new EmptyFetch<U>();
@@ -1785,11 +1066,11 @@ public interface Linq<T> {
 	}
 
 	public static final class SkipFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final long count;
 		private long index;
 
-		public SkipFetch(FetchBase<T> fetch, long count) {
+		public SkipFetch(Fetch<T> fetch, long count) {
 			this.fetch = fetch;
 			this.count = count;
 			this.index = 0L;
@@ -1817,11 +1098,11 @@ public interface Linq<T> {
 	}
 
 	public static final class SkipLastFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final int count;
 		private ArrayDeque<Holder<T>> queue;
 
-		public SkipLastFetch(FetchBase<T> fetch, int count) {
+		public SkipLastFetch(Fetch<T> fetch, int count) {
 			this.fetch = fetch;
 			this.count = count;
 			this.queue = null;
@@ -1861,11 +1142,11 @@ public interface Linq<T> {
 	}
 
 	public static final class SkipWhileFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final Predicate<T> predicate;
 		private boolean skipped;
 
-		public SkipWhileFetch(FetchBase<T> fetch, Predicate<T> predicate) {
+		public SkipWhileFetch(Fetch<T> fetch, Predicate<T> predicate) {
 			this.fetch = fetch;
 			this.predicate = predicate;
 			this.skipped = false;
@@ -1899,11 +1180,11 @@ public interface Linq<T> {
 	}
 
 	public static final class TakeFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final int count;
 		private int index;
 
-		public TakeFetch(FetchBase<T> fetch, int count) {
+		public TakeFetch(Fetch<T> fetch, int count) {
 			this.fetch = fetch;
 			this.count = count;
 			this.index = 0;
@@ -1932,11 +1213,11 @@ public interface Linq<T> {
 	}
 
 	public static final class TakeLastFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final int count;
 		private Queue<Holder<T>> queue;
 
-		public TakeLastFetch(FetchBase<T> fetch, int count) {
+		public TakeLastFetch(Fetch<T> fetch, int count) {
 			this.fetch = fetch;
 			this.count = count;
 			this.queue = null;
@@ -1976,11 +1257,11 @@ public interface Linq<T> {
 	}
 
 	public static final class TakeWhileFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final Predicate<T> predicate;
 		private boolean terminated;
 
-		public TakeWhileFetch(FetchBase<T> fetch, Predicate<T> predicate) {
+		public TakeWhileFetch(Fetch<T> fetch, Predicate<T> predicate) {
 			this.fetch = fetch;
 			this.predicate = predicate;
 			this.terminated = false;
@@ -2046,10 +1327,10 @@ public interface Linq<T> {
 	}
 
 	public static final class TypeFetch<T, U> extends Fetch<U> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final Class<U> type;
 
-		public TypeFetch(FetchBase<T> fetch, Class<U> type) {
+		public TypeFetch(Fetch<T> fetch, Class<U> type) {
 			this.fetch = fetch;
 			this.type = type;
 		}
@@ -2078,12 +1359,12 @@ public interface Linq<T> {
 	}
 
 	public static final class UnionByFetch<T, K> extends Fetch<T> {
-		private final FetchBase<T> left;
-		private final FetchBase<T> right;
+		private final Fetch<T> left;
+		private final Fetch<T> right;
 		private final Function<T, K> keyFactory;
 		private Iterator<Holder<T>> iterator;
 
-		public UnionByFetch(FetchBase<T> left, FetchBase<T> right, Function<T, K> keyFactory) {
+		public UnionByFetch(Fetch<T> left, Fetch<T> right, Function<T, K> keyFactory) {
 			this.left = left;
 			this.right = right;
 			this.keyFactory = keyFactory;
@@ -2134,11 +1415,11 @@ public interface Linq<T> {
 	}
 
 	public static final class UnionFetch<T> extends Fetch<T> {
-		private final FetchBase<T> left;
-		private final FetchBase<T> right;
+		private final Fetch<T> left;
+		private final Fetch<T> right;
 		private Iterator<Holder<T>> iterator;
 
-		public UnionFetch(FetchBase<T> left, FetchBase<T> right) {
+		public UnionFetch(Fetch<T> left, Fetch<T> right) {
 			this.left = left;
 			this.right = right;
 			this.iterator = null;
@@ -2188,10 +1469,10 @@ public interface Linq<T> {
 	}
 
 	public static final class WhereFetch<T> extends Fetch<T> {
-		private final FetchBase<T> fetch;
+		private final Fetch<T> fetch;
 		private final Predicate<T> predicate;
 
-		public WhereFetch(FetchBase<T> fetch, Predicate<T> predicate) {
+		public WhereFetch(Fetch<T> fetch, Predicate<T> predicate) {
 			this.fetch = fetch;
 			this.predicate = predicate;
 		}
@@ -2218,10 +1499,10 @@ public interface Linq<T> {
 	}
 
 	public static final class ZipFetch<TLeft, TRight> extends Fetch<Tuple2<TLeft, TRight>> {
-		private final FetchBase<TLeft> left;
-		private final FetchBase<TRight> right;
+		private final Fetch<TLeft> left;
+		private final Fetch<TRight> right;
 
-		public ZipFetch(FetchBase<TLeft> left, FetchBase<TRight> right) {
+		public ZipFetch(Fetch<TLeft> left, Fetch<TRight> right) {
 			this.left = left;
 			this.right = right;
 		}
@@ -2251,292 +1532,766 @@ public interface Linq<T> {
 		}
 	}
 
-	@FunctionalInterface
-	public interface OrderLinq<T> extends Linq<T> {
+	public static final class OrderLinq<T> extends Linq<T> {
+		private final Supplier<OrderFetch<T>> supplier;
+
+		public OrderLinq(Supplier<OrderFetch<T>> supplier) {
+			super(supplier);
+			this.supplier = supplier;
+		}
+
 		@Override
-		OrderFetch<T> fetch();
-
-		public default <U extends Comparable<U>> OrderLinq<T> thenBy(final Function<T, U> keySelector) {
-			return () -> fetch().thenBy(keySelector);
+		public OrderFetch<T> fetch() {
+			return supplier.get();
 		}
 
-		public default <U extends Comparable<U>> OrderLinq<T> thenByDescending(final Function<T, U> keySelector) {
-			return () -> fetch().thenByDescending(keySelector);
+		public final <U extends Comparable<U>> OrderLinq<T> thenBy(final Function<T, U> keySelector) {
+			return new OrderLinq<T>(() -> fetch().thenBy(keySelector));
+		}
+
+		public final <U extends Comparable<U>> OrderLinq<T> thenByDescending(final Function<T, U> keySelector) {
+			return new OrderLinq<T>(() -> fetch().thenByDescending(keySelector));
 		}
 	}
 
-	public static <T> Linq<T> empty() {
-		return () -> Fetch.empty();
+	public static final <T> Linq<T> empty() {
+		return of(() -> new EmptyFetch<T>());
 	}
 
-	public static <T> Linq<T> from(final Iterable<T> iterable) {
-		return () -> Fetch.from(iterable);
+	public static final <T> Linq<T> from(final Iterable<T> iterable) {
+		return of(() -> new IterableFetch<T>(iterable));
 	}
 
-	public static <T> Linq<T> from(final Stream<T> stream) {
-		return () -> Fetch.from(stream);
+	public static final <T> Linq<T> from(final Stream<T> stream) {
+		return of(() -> new StreamFetch<T>(stream));
 	}
 
 	@SafeVarargs
-	public static <T> Linq<T> from(final T... xs) {
-		return () -> Fetch.from(xs);
+	public static final <T> Linq<T> from(final T... xs) {
+		return of(() -> new ArrayFetch<T>(xs));
 	}
 
-	public static Linq<Integer> range(final int start, final int count) {
-		return () -> Fetch.range(start, count);
+	public static final Linq<Integer> range(final int start, final int count) {
+		return of(() -> new RangeFetch(start, count));
 	}
 
-	public static <T> Linq<T> repeat(final T value, final int count) {
-		return () -> Fetch.repeat(value, count);
+	public static final <T> Linq<T> repeat(final T value, final int count) {
+		return of(() -> new RepeatFetch<T>(value, count));
 	}
 
-	Fetch<T> fetch();
+	public final FetchIterator<T> iterator() {
+		return new FetchIterator<T>(fetch());
+	}
+
+	public final <TRight, TKey, TResult> Linq<TResult> groupJoin(
+			Linq<TRight> right,
+			Function<T, TKey> leftKeyFactory,
+			Function<TRight, TKey> rightKeyFactory,
+			BiFunction<T, Linq<TRight>, TResult> resultFactory) {
+
+		return of(() -> new GroupJoinFetch<T, TRight, TKey, TResult>(
+				fetch(),
+				right.fetch(),
+				leftKeyFactory,
+				rightKeyFactory,
+				resultFactory));
+	}
+
+	public final <TRight, TKey, TResult> Linq<TResult> join(
+			Linq<TRight> right,
+			Function<T, TKey> leftKeyFactory,
+			Function<TRight, TKey> rightKeyFactory,
+			BiFunction<T, Linq<TRight>, TResult> resultFactory) {
+
+		return of(() -> new JoinFetch<T, TRight, TKey, TResult>(
+				fetch(),
+				right.fetch(),
+				leftKeyFactory,
+				rightKeyFactory,
+				resultFactory));
+	}
 
-	public default <TRight, TKey, TResult> Linq<TResult> groupJoin(Linq<TRight> right, Function<T, TKey> leftKeyFactory, Function<TRight, TKey> rightKeyFactory, BiFunction<T, Linq<TRight>, TResult> resultFactory) {
-		return () -> fetch().groupJoin(right.fetch(), leftKeyFactory, rightKeyFactory, (l, r) -> resultFactory.apply(l, () -> r));
+	private final Supplier<? extends Fetch<T>> supplier;
+
+	public Linq(Supplier<? extends Fetch<T>> supplier) {
+		this.supplier = supplier;
 	}
 
-	public default T aggregate(BiFunction<T, T, T> func) {
-		return fetch().aggregate(func);
+	public Fetch<T> fetch() {
+		return supplier.get();
 	}
 
-	public default T aggregate(T seed, BiFunction<T, T, T> func) {
-		return fetch().aggregate(seed, func);
+	public static <T> Linq<T> of(Supplier<Fetch<T>> supplier) {
+		return new Linq<T>(supplier);
 	}
 
-	public default <TRight, TKey, TResult> Linq<TResult> join(Linq<TRight> right, Function<T, TKey> leftKeyFactory, Function<TRight, TKey> rightKeyFactory, BiFunction<T, Linq<TRight>, TResult> resultFactory) {
-		return () -> fetch().join(right.fetch(), leftKeyFactory, rightKeyFactory, (l, r) -> resultFactory.apply(l, () -> r));
+	public final <U> Linq<U> cast() {
+		return of(() -> new CastFetch<T, U>(fetch()));
 	}
 
-	public default boolean all(Predicate<T> predicate) {
-		return fetch().all(predicate);
+	public final Linq<List<T>> chunk(final int size) {
+		return of(() -> new ChunkFetch<T>(fetch(), size));
 	}
 
-	public default <U> Linq<U> cast() {
-		return () -> fetch().cast();
+	public final Linq<T> concat(final Linq<T> right) {
+		return of(() -> new ConcatFetch<T>(fetch(), right.fetch()));
 	}
 
-	public default boolean any() {
-		return fetch().any();
+	public final Linq<T> append(final T value) {
+		return of(() -> new ConcatFetch<T>(fetch(), Linq.from(value).fetch()));
 	}
 
-	public default boolean any(Predicate<T> predicate) {
-		return fetch().any(predicate);
+	public final Linq<T> defaultIfEmpty(final T defaultValue) {
+		return of(() -> new DefaultIfEmptyFetch<T>(fetch(), defaultValue));
 	}
 
-	public default Linq<List<T>> chunk(int size) {
-		return () -> fetch().chunk(size);
+	public final Linq<T> distinct() {
+		return of(() -> new DistinctFetch<T>(fetch()));
 	}
 
-	public default Linq<T> concat(Linq<T> right) {
-		return () -> fetch().concat(right.fetch());
+	public final <K> Linq<T> distinctBy(final Function<T, K> keyFactory) {
+		return of(() -> new DistinctByFetch<T, K>(fetch(), keyFactory));
 	}
 
-	public default Linq<T> append(T value) {
-		return () -> fetch().append(value);
+	public final Linq<T> except(final Linq<T> right) {
+		return of(() -> new ExceptFetch<T>(fetch(), right.fetch()));
 	}
 
-	public default Long average(Function<T, Long> func) {
-		return fetch().average(func);
+	public final <K> Linq<T> exceptBy(final Linq<T> right, final Function<T, K> keyFactory) {
+		return of(() -> new ExceptByFetch<T, K>(fetch(), right.fetch(), keyFactory));
 	}
 
-	public default Linq<T> defaultIfEmpty(T defaultValue) {
-		return () -> fetch().defaultIfEmpty(defaultValue);
+	public final <K> Linq<Entry<K, List<T>>> groupBy(final Function<T, K> keySelector) {
+		return of(() -> new GroupByFetch<T, K>(fetch(), keySelector));
 	}
 
-	public default Linq<T> distinct() {
-		return () -> fetch().distinct();
+	public final Linq<T> intersect(final Linq<T> right) {
+		return of(() -> new IntersectFetch<T>(fetch(), right.fetch()));
 	}
 
-	public default <K> Linq<T> distinctBy(Function<T, K> keyFactory) {
-		return () -> fetch().distinctBy(keyFactory);
+	public final <TKey> Linq<T> intersectBy(final Linq<TKey> right, final Function<T, TKey> keyFactory) {
+		return of(() -> new IntersectByFetch<T, TKey>(fetch(), right.fetch(), keyFactory));
 	}
 
-	public default boolean contains(T target) {
-		return fetch().contains(target);
+	public final <U> Linq<U> ofType(final Class<U> type) {
+		return of(() -> new TypeFetch<T, U>(fetch(), type));
 	}
 
-	public default Linq<T> except(Linq<T> right) {
-		return () -> fetch().except(right.fetch());
+	public final <U extends Comparable<U>> OrderLinq<T> orderBy(final Function<T, U> keySelector) {
+		return new OrderLinq<T>(() -> new OrderFetch<T>(fetch(), Comparator.comparing(keySelector)));
 	}
 
-	public default <K> Linq<T> exceptBy(Linq<T> right, Function<T, K> keyFactory) {
-		return () -> fetch().exceptBy(right.fetch(), keyFactory);
+	public final <U extends Comparable<U>> OrderLinq<T> orderByDescending(final Function<T, U> keySelector) {
+		return new OrderLinq<T>(() -> new OrderFetch<T>(fetch(), Comparator.comparing(keySelector, Comparator.reverseOrder())));
 	}
 
-	public default long count() {
-		return fetch().count();
+	public final Linq<T> prepend(T value) {
+		return of(() -> new ConcatFetch<T>(Linq.from(value).fetch(), fetch()));
 	}
 
-	public default <K> Linq<Entry<K, List<T>>> groupBy(Function<T, K> keySelector) {
-		return () -> fetch().groupBy(keySelector);
+	public final Linq<T> reverse() {
+		return of(() -> new ReverseFetch<T>(fetch()));
 	}
 
-	public default T elementAt(long index) {
-		return fetch().elementAt(index);
+	public final <U> Linq<U> select(final Function<T, U> mapper) {
+		return of(() -> new SelectFetch<T, U>(fetch(), mapper));
 	}
 
-	public default Linq<T> intersect(Linq<T> right) {
-		return () -> fetch().intersect(right.fetch());
+	public final <U> Linq<U> selectMany(final Function<T, Linq<U>> mapper) {
+		return of(() -> new SelectManyFetch<T, U>(fetch(), x -> mapper.apply(x).fetch()));
 	}
 
-	public default <TKey> Linq<T> intersectBy(Linq<TKey> right, Function<T, TKey> keyFactory) {
-		return () -> fetch().intersectBy(right.fetch(), keyFactory);
+	public final Linq<T> take(int count) {
+		return of(() -> new TakeFetch<T>(fetch(), count));
 	}
 
-	public default T elementAtOrDefault(long index, T defaultValue) {
-		return fetch().elementAtOrDefault(index, defaultValue);
+	public final Linq<T> takeLast(final int size) {
+		return of(() -> new TakeLastFetch<T>(fetch(), size));
 	}
 
-	public default <U> Linq<U> ofType(Class<U> type) {
-		return () -> fetch().ofType(type);
+	public final Linq<T> takeWhile(Predicate<T> predicate) {
+		return of(() -> new TakeWhileFetch<T>(fetch(), predicate));
 	}
 
-	public default <U extends Comparable<U>> OrderLinq<T> orderBy(Function<T, U> keySelector) {
-		return () -> fetch().orderBy(keySelector);
+	public final Linq<T> union(final Linq<T> right) {
+		return of(() -> new UnionFetch<T>(fetch(), right.fetch()));
 	}
 
-	public default T first() {
-		return fetch().first();
+	public final <TKey> Linq<T> unionBy(final Linq<T> right, final Function<T, TKey> keyFactory) {
+		return of(() -> new UnionByFetch<T, TKey>(fetch(), right.fetch(), keyFactory));
 	}
 
-	public default <U extends Comparable<U>> OrderLinq<T> orderByDescending(Function<T, U> keySelector) {
-		return () -> fetch().orderByDescending(keySelector);
+	public final Linq<T> where(final Predicate<T> predicatge) {
+		return of(() -> new WhereFetch<T>(fetch(), predicatge));
 	}
 
-	public default T firstOrDefault(T defaultValue) {
-		return fetch().firstOrDefault(defaultValue);
+	public final <TRight> Linq<Tuple2<T, TRight>> zip(final Linq<TRight> right) {
+		return of(() -> new ZipFetch<T, TRight>(fetch(), right.fetch()));
 	}
 
-	public default Linq<T> prepend(T value) {
-		return () -> fetch().prepend(value);
+	public final Linq<T> skip(final long count) {
+		return of(() -> new SkipFetch<T>(fetch(), count));
 	}
 
-	public default T last() {
-		return fetch().last();
+	public final Linq<T> skipLast(final int size) {
+		return of(() -> new SkipLastFetch<T>(fetch(), size));
 	}
 
-	public default Linq<T> reverse() {
-		return () -> fetch().reverse();
+	public final Linq<T> skipWhile(Predicate<T> predicate) {
+		return of(() -> new SkipWhileFetch<T>(fetch(), predicate));
 	}
+
+	public final T aggregate(BiFunction<T, T, T> func) {
+		try (var fetch = fetch()) {
+			var first = fetch.next();
+
+			if (!first.exists()) {
+				throw new NoSuchElementException();
+			}
+
+			var result = first.value();
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return result;
+				}
 
-	public default <U> Linq<U> select(Function<T, U> mapper) {
-		return () -> fetch().select(mapper);
+				result = func.apply(result, current.value());
+			}
+		}
 	}
 
-	public default <U> Linq<U> selectMany(Function<T, Linq<U>> mapper) {
-		return () -> fetch().selectMany(x -> mapper.apply(x).fetch());
+	public final T aggregate(T seed, BiFunction<T, T, T> func) {
+		try (var fetch = fetch()) {
+			var result = seed;
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return result;
+				}
+
+				result = func.apply(result, current.value());
+			}
+		}
 	}
 
-	public default T lastOrDefault(T defaultValue) {
-		return fetch().lastOrDefault(defaultValue);
+	public final boolean all(Predicate<T> predicate) {
+		try (var fetch = fetch()) {
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return true;
+				}
+
+				if (!predicate.test(current.value())) {
+					return false;
+				}
+			}
+		}
 	}
 
-	public default Linq<T> take(int count) {
-		return () -> fetch().take(count);
+	public final boolean any() {
+		try (var fetch = fetch()) {
+			return fetch.next().exists();
+		}
 	}
+
+	public final boolean any(Predicate<T> predicate) {
+		try (var fetch = fetch()) {
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return false;
+				}
 
-	public default Linq<T> takeLast(int size) {
-		return () -> fetch().takeLast(size);
+				if (predicate.test(current.value())) {
+					return true;
+				}
+			}
+		}
 	}
 
-	public default T max(Comparator<T> comparator) {
-		return fetch().max(comparator);
+	public final Long average(Function<T, Long> func) {
+		try (var fetch = fetch()) {
+			var sum = 0L;
+			var count = 0L;
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return sum / count;
+				}
+
+				sum += func.apply(current.value());
+				count++;
+			}
+		}
 	}
 
-	public default Linq<T> takeWhile(Predicate<T> predicate) {
-		return () -> fetch().takeWhile(predicate);
+	public final boolean contains(T target) {
+		try (var fetch = fetch()) {
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return false;
+				}
+
+				if (Objects.equals(target, current.value())) {
+					return true;
+				}
+			}
+		}
 	}
+
+	public final long count() {
+		try (var fetch = fetch()) {
+			var count = 0L;
+
+			while (fetch.next().exists()) {
+				count++;
+			}
 
-	public default Linq<T> union(Linq<T> right) {
-		return () -> fetch().union(right);
+			return count;
+		}
 	}
 
-	public default <TKey> Linq<T> unionBy(Linq<T> right, Function<T, TKey> keyFactory) {
-		return () -> fetch().unionBy(right, keyFactory);
+	public final T elementAt(long index) {
+		try (var fetch = fetch()) {
+			var count = 0L;
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					throw new IndexOutOfBoundsException();
+				}
+
+				if (count == index) {
+					return current.value();
+				}
+
+				count++;
+			}
+		}
 	}
+
+	public final T elementAtOrDefault(long index, T defaultValue) {
+		try (var fetch = fetch()) {
+			var count = 0L;
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return defaultValue;
+				}
 
-	public default <TKey extends Comparable<TKey>> T maxBy(Function<T, TKey> keyFactory) {
-		return fetch().maxBy(keyFactory);
+				if (count == index) {
+					return current.value();
+				}
+
+				count++;
+			}
+		}
 	}
+
+	public final T first() {
+		try (var fetch = fetch()) {
+			var first = fetch.next();
+
+			if (!first.exists()) {
+				throw new NoSuchElementException();
+			}
 
-	public default <TKey> T maxBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
-		return fetch().maxBy(keyFactory, keyComparator);
+			return first.value();
+		}
 	}
 
-	public default Linq<T> where(Predicate<T> predicatge) {
-		return () -> fetch().where(predicatge);
+	public final T firstOrDefault(T defaultValue) {
+		try (var fetch = fetch()) {
+			var first = fetch.next();
+
+			if (first.exists()) {
+				return first.value();
+			} else {
+				return defaultValue;
+			}
+		}
 	}
+
+	public final T last() {
+		try (var fetch = fetch()) {
+			var last = fetch.next();
+
+			if (!last.exists()) {
+				throw new NoSuchElementException();
+			}
+
+			while (true) {
+				var current = fetch.next();
 
-	public default <TRight> Linq<Tuple2<T, TRight>> zip(Linq<TRight> right) {
-		return () -> fetch().zip(right);
+				if (!current.exists()) {
+					return last.value();
+				}
+
+				last = current;
+			}
+		}
 	}
+
+	public final T lastOrDefault(T defaultValue) {
+		try (var fetch = fetch()) {
+			var last = fetch.next();
+
+			if (last.exists()) {
+				while (true) {
+					var current = fetch.next();
 
-	public default Linq<T> skip(long count) {
-		return () -> fetch().skip(count);
+					if (!current.exists()) {
+						return last.value();
+					}
+
+					last = current;
+				}
+			} else {
+				return defaultValue;
+			}
+		}
 	}
+
+	public final T max(Comparator<T> comparator) {
+		try (var fetch = fetch()) {
+			var max = fetch.next();
+
+			if (!max.exists()) {
+				throw new NoSuchElementException();
+			}
+
+			while (true) {
+				var current = fetch.next();
 
-	public default Linq<T> skipLast(int size) {
-		return () -> fetch().skipLast(size);
+				if (!current.exists()) {
+					return max.value();
+				}
+
+				if (comparator.compare(max.value(), current.value()) < 0) {
+					max = current;
+				}
+			}
+		}
 	}
+
+	public final <TKey extends Comparable<TKey>> T maxBy(Function<T, TKey> keyFactory) {
+		try (var fetch = fetch()) {
+			var max = fetch.next();
+
+			if (!max.exists()) {
+				throw new NoSuchElementException();
+			}
+
+			var maxKey = keyFactory.apply(max.value());
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return max.value();
+				}
+
+				var currentKey = keyFactory.apply(current.value());
 
-	public default T min(Comparator<T> comparator) {
-		return fetch().min(comparator);
+				if (maxKey.compareTo(currentKey) < 0) {
+					max = current;
+					maxKey = currentKey;
+				}
+			}
+		}
 	}
 
-	public default Linq<T> skipWhile(Predicate<T> predicate) {
-		return () -> fetch().skipWhile(predicate);
+	public final <TKey> T maxBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
+		try (var fetch = fetch()) {
+			var max = fetch.next();
+
+			if (!max.exists()) {
+				throw new NoSuchElementException();
+			}
+
+			var maxKey = keyFactory.apply(max.value());
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return max.value();
+				}
+
+				var currentKey = keyFactory.apply(current.value());
+
+				if (keyComparator.compare(maxKey, currentKey) < 0) {
+					max = current;
+					maxKey = currentKey;
+				}
+			}
+		}
 	}
+
+	public final T min(Comparator<T> comparator) {
+		try (var fetch = fetch()) {
+			var min = fetch.next();
 
-	public default <TKey extends Comparable<TKey>> T minBy(Function<T, TKey> keyFactory) {
-		return fetch().minBy(keyFactory);
+			if (!min.exists()) {
+				throw new NoSuchElementException();
+			}
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return min.value();
+				}
+
+				if (comparator.compare(min.value(), current.value()) > 0) {
+					min = current;
+				}
+			}
+		}
 	}
+
+	public final <TKey extends Comparable<TKey>> T minBy(Function<T, TKey> keyFactory) {
+		try (var fetch = fetch()) {
+			var min = fetch.next();
+
+			if (!min.exists()) {
+				throw new NoSuchElementException();
+			}
+
+			var minKey = keyFactory.apply(min.value());
+
+			while (true) {
+				var current = fetch.next();
 
-	public default <TKey> T minBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
-		return fetch().minBy(keyFactory, keyComparator);
+				if (!current.exists()) {
+					return min.value();
+				}
+
+				var currentKey = keyFactory.apply(current.value());
+
+				if (minKey.compareTo(currentKey) > 0) {
+					min = current;
+					minKey = currentKey;
+				}
+			}
+		}
 	}
+
+	public final <TKey> T minBy(Function<T, TKey> keyFactory, Comparator<TKey> keyComparator) {
+		try (var fetch = fetch()) {
+			var min = fetch.next();
+
+			if (!min.exists()) {
+				throw new NoSuchElementException();
+			}
+
+			var minKey = keyFactory.apply(min.value());
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return min.value();
+				}
 
-	public default boolean sequenceEqual(Linq<T> right) {
-		return fetch().sequenceEqual(right.fetch());
+				var currentKey = keyFactory.apply(current.value());
+
+				if (keyComparator.compare(minKey, currentKey) > 0) {
+					min = current;
+					minKey = currentKey;
+				}
+			}
+		}
 	}
+
+	public final boolean sequenceEqual(Linq<T> right) {
+		try (var _right = right.fetch();
+				var _left = fetch()) {
+
+			while (true) {
+				var l = _left.next();
+				var r = _right.next();
 
-	public default T single() {
-		return fetch().single();
+				if (!l.exists() && !r.exists()) {
+					return true;
+				}
+
+				if (!Objects.equals(l, r)) {
+					return false;
+				}
+			}
+		}
 	}
+
+	public final T single() {
+		try (var fetch = fetch()) {
+			var current = fetch.next();
+
+			if (!current.exists()) {
+				throw new IllegalStateException("値が存在しません");
+			}
+
+			if (fetch.next().exists()) {
+				throw new IllegalStateException("値が複数存在します");
+			}
 
-	public default T singleOrDefault(T defaultValue) {
-		return fetch().singleOrDefault(defaultValue);
+			return current.value();
+		}
 	}
 
-	public default long sum(Function<T, Long> func) {
-		return fetch().sum(func);
+	public final T singleOrDefault(T defaultValue) {
+		try (var fetch = fetch()) {
+			var current = fetch.next();
+
+			if (!current.exists()) {
+				return defaultValue;
+			}
+
+			if (fetch.next().exists()) {
+				throw new IllegalStateException("値が複数存在します");
+			}
+
+			return current.value();
+		}
 	}
 
-	public default T[] toArray(T[] array) {
-		return fetch().toArray(array);
+	public final long sum(Function<T, Long> func) {
+		try (var fetch = fetch()) {
+			var result = 0L;
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return result;
+				}
+
+				result += func.apply(current.value());
+			}
+		}
 	}
+
+	public final void forEach(Consumer<? super T> consumer) {
+		try (var fetch = fetch()) {
+			while (true) {
+				var current = fetch.next();
 
-	public default <K> LinkedHashMap<K, T> toDictionary(Function<T, K> keyFactory) {
-		return fetch().toDictionary(keyFactory);
+				if (!current.exists()) {
+					return;
+				}
+
+				consumer.accept(current.value());
+			}
+		}
 	}
+
+	public final T[] toArray(T[] array) {
+		try (var fetch = fetch()) {
+			var list = new ArrayList<T>();
+
+			while (true) {
+				var current = fetch.next();
 
-	public default LinkedHashSet<T> toHashSet() {
-		return fetch().toHashSet();
+				if (!current.exists()) {
+					return list.toArray(array);
+				}
+
+				list.add(current.value());
+			}
+		}
 	}
+
+	public final <K> LinkedHashMap<K, T> toDictionary(Function<T, K> keyFactory) {
+		try (var fetch = fetch()) {
+			var map = new LinkedHashMap<K, T>();
+
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return map;
+				}
 
-	public default ArrayList<T> toList() {
-		return fetch().toList();
+				var key = keyFactory.apply(current.value());
+
+				if (map.containsKey(key)) {
+					throw new IllegalArgumentException("キーが重複しています: " + key);
+				}
+
+				map.put(key, current.value());
+			}
+		}
 	}
+
+	public final LinkedHashSet<T> toHashSet() {
+		try (var fetch = fetch()) {
+			var set = new LinkedHashSet<T>();
 
-	public default <K> LinkedHashMap<K, List<T>> toLookup(Function<T, K> keyFactory) {
-		return fetch().toLookup(keyFactory);
+			while (true) {
+				var current = fetch.next();
+
+				if (!current.exists()) {
+					return set;
+				}
+
+				set.add(current.value());
+			}
+		}
 	}
+
+	public final ArrayList<T> toList() {
+		try (var fetch = fetch()) {
+			var list = new ArrayList<T>();
+
+			while (true) {
+				var current = fetch.next();
 
-	public default FetchIterator<T> iterator() {
-		return fetch().iterator();
+				if (!current.exists()) {
+					return list;
+				}
+
+				list.add(current.value());
+			}
+		}
 	}
+
+	public final <K> LinkedHashMap<K, List<T>> toLookup(Function<T, K> keyFactory) {
+		try (var fetch = fetch()) {
+			var map = new LinkedHashMap<K, List<T>>();
+
+			while (true) {
+				var current = fetch.next();
 
-	public default void forEach(Consumer<? super T> consumer) {
-		fetch().forEach(consumer);
+				if (!current.exists()) {
+					return map;
+				}
+
+				var key = keyFactory.apply(current.value());
+				var list = map.get(key);
+
+				if (list == null) {
+					list = new ArrayList<T>();
+					map.put(key, list);
+				}
+
+				list.add(current.value());
+			}
+		}
 	}
+
 }

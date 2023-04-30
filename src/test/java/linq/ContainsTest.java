@@ -18,7 +18,7 @@ public class ContainsTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.contains(1);
 		assertEquals(1, linq.getCloseCount());
 	}

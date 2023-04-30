@@ -12,10 +12,10 @@ public class LastOrDefaultTest {
 		assertEquals("a", Linq.from("a").lastOrDefault("X"));
 		assertEquals("c", Linq.from("a", "b", "c").lastOrDefault("X"));
 	}
-	
+
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.lastOrDefault(0);
 		assertEquals(1, linq.getCloseCount());
 	}

@@ -21,7 +21,7 @@ public class OrderByDescendingTest {
 
 	@Test
 	public void testClose() {
-		var linq = new CloseCountLinq();
+		var linq = CloseCountLinq.create();
 		linq.orderByDescending(x -> x).iterator().close();
 		assertEquals(1, linq.getCloseCount());
 	}
